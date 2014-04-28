@@ -654,7 +654,7 @@ class KCC(object):
 
                     res = self.samdb.search(base=pdnstr, scope=ldb.SCOPE_BASE,
                                             attrs=attrs)
-                except ldb.ldbError, (enum, estr):
+                except ldb.LdbError, (enum, estr):
                     raise Exception \
                         ("Unable to find attr (%s) for (%s) - (%s)" %
                          (x_transport.address_attr, pdnstr, estr))
