@@ -1617,12 +1617,8 @@ NTSTATUS wb_open_internal_pipe(TALLOC_CTX *mem_ctx,
 	struct auth_session_info *session_info = NULL;
 	NTSTATUS status;
 
-	status = make_session_info_system(mem_ctx, &session_info);
-	if (!NT_STATUS_IS_OK(status)) {
-		DEBUG(0, ("wb_open_internal_pipe: Could not get system session_info: %s\n",
-			  nt_errstr(status)));
-		return status;
-	}
+	session_info = get_session_info_system();
+	SMB_ASSERT(session_info != NULL);
 
 	/* create a connection to the specified pipe */
 	if (lp_parm_bool(-1, "winbindd", "use external pipes", false)) {
