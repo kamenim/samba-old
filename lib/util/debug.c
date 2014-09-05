@@ -281,14 +281,14 @@ int debug_add_class(const char *classname)
 
 	default_level = DEBUGLEVEL_CLASS[DBGC_ALL];
 
-	new_class_list = talloc_realloc(NULL, new_class_list, int, ndx + 1);
+	new_class_list = talloc_realloc(talloc_autofree_context(), new_class_list, int, ndx + 1);
 	if (!new_class_list)
 		return -1;
 	DEBUGLEVEL_CLASS = new_class_list;
 
 	DEBUGLEVEL_CLASS[ndx] = default_level;
 
-	new_name_list = talloc_realloc(NULL, classname_table, char *, ndx + 1);
+	new_name_list = talloc_realloc(talloc_autofree_context(), classname_table, char *, ndx + 1);
 	if (!new_name_list)
 		return -1;
 	classname_table = new_name_list;
@@ -441,7 +441,7 @@ static void debug_init(void)
 	for(p = default_classname_table; *p; p++) {
 		debug_add_class(*p);
 	}
-	format_bufr = talloc_array(NULL, char, FORMAT_BUFR_SIZE);
+	format_bufr = talloc_array(talloc_autofree_context(), char, FORMAT_BUFR_SIZE);
 	if (!format_bufr) {
 		smb_panic("debug_init: unable to create buffer");
 	}
@@ -502,7 +502,7 @@ void debug_set_logfile(const char *name)
 		return;
 	}
 	TALLOC_FREE(state.debugf);
-	state.debugf = talloc_strdup(NULL, name);
+	state.debugf = talloc_strdup(talloc_autofree_context(), name);
 }
 
 static void debug_close_fd(int fd)
