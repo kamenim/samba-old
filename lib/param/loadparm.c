@@ -1206,7 +1206,7 @@ static void init_copymap(struct loadparm_service *pservice)
 
 	TALLOC_FREE(pservice->copymap);
 
-	pservice->copymap = bitmap_talloc(NULL, NUMPARAMETERS);
+	pservice->copymap = bitmap_talloc(talloc_autofree_context(), NUMPARAMETERS);
 	if (!pservice->copymap)
 		DEBUG(0,
 		      ("Couldn't allocate copymap!! (size %d)\n",
