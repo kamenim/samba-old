@@ -153,7 +153,7 @@ int ldb_register_backend(const char *url_prefix, ldb_connect_fn connectfn, bool 
 			return LDB_SUCCESS;
 		}
 	} else {
-		be = talloc_zero(ldb_backends, struct backends_list_entry);
+		be = talloc_zero(talloc_autofree_context(), struct backends_list_entry);
 		if (!be) {
 			return LDB_ERR_OPERATIONS_ERROR;
 		}
@@ -235,7 +235,7 @@ static struct ldb_hooks {
 int ldb_register_hook(ldb_hook_fn hook_fn)
 {
 	struct ldb_hooks *lc;
-	lc = talloc_zero(ldb_hooks, struct ldb_hooks);
+	lc = talloc_zero(talloc_autofree_context(), struct ldb_hooks);
 	if (lc == NULL) {
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
@@ -917,7 +917,7 @@ static int ldb_modules_load_path(const char *path, const char *version)
 		}
 	}
 
-	le = talloc(loaded, struct loaded);
+	le = talloc(talloc_autofree_context(), struct loaded);
 	if (le == NULL) {
 		fprintf(stderr, "ldb: unable to allocated loaded entry\n");
 		return LDB_ERR_UNAVAILABLE;
