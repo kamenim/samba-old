@@ -221,7 +221,13 @@ char *debug_list_class_names_and_levels(void)
 	unsigned int i;
 	/* prepare strings */
 	for (i = 0; i < debug_num_classes; i++) {
-		buf = talloc_asprintf_append(buf, 
+		if (buf == NULL) {
+			buf = talloc_new(talloc_autofree_context());
+			if (buf == NULL) {
+				return NULL;
+			}
+		}
+		buf = talloc_asprintf_append(buf,
 					     "%s:%d%s",
 					     classname_table[i],
 					     DEBUGLEVEL_CLASS[i],
