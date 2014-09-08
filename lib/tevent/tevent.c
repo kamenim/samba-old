@@ -88,7 +88,7 @@ bool tevent_register_backend(const char *name, const struct tevent_ops *ops)
 		}
 	}
 
-	e = talloc(NULL, struct tevent_ops_list);
+	e = talloc(talloc_autofree_context(), struct tevent_ops_list);
 	if (e == NULL) return false;
 
 	e->name = name;
