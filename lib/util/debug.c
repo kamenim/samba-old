@@ -215,10 +215,20 @@ void gfree_debugsyms(void)
 utility lists registered debug class names's
 ****************************************************************************/
 
-char *debug_list_class_names_and_levels(void)
+char *debug_list_class_names_and_levels(TALLOC_CTX *mem_ctx)
 {
-	char *buf = NULL;
+	char *buf;
 	unsigned int i;
+
+	/*
+	 * Initial allocation for 20 char so we skip reallocation at least
+	 * for first iteration. 20 > len("printdrivers" + ":" + "999" + "\n")
+	 */
+	buf = talloc_zero_array(mem_ctx, char, 20);
+	if (buf == NULL) {
+		return NULL;
+	}
+
 	/* prepare strings */
 	for (i = 0; i < debug_num_classes; i++) {
 		buf = talloc_asprintf_append(buf,

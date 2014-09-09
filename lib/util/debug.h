@@ -253,7 +253,7 @@ bool dbghdr(int level, const char *location, const char *func);
 bool debug_get_output_is_stderr(void);
 bool debug_get_output_is_stdout(void);
 void debug_schedule_reopen_logs(void);
-char *debug_list_class_names_and_levels(void);
+char *debug_list_class_names_and_levels(TALLOC_CTX *mem_ctx);
 
 typedef void (*debug_callback_fn)(void *private_ptr, int level, const char *msg);
 
