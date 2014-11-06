@@ -105,6 +105,42 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
         attr_list |= sub_set
         return attr_list
 
+    def test_restore_user(self):
+        print "Test restored user attributes"
+        username = "restore_user"
+        usr_dn = "cn=%s,cn=users,%s" % (username, self.base_dn)
+        samba.tests.delete_force(self.samdb, usr_dn)
+        self.samdb.add({
+            "dn": usr_dn,
+            "objectClass": "user",
+            "description": "test user description",
+            "sAMAccountName": username})
+        obj = self.search_dn(usr_dn)
+        guid = obj["objectGUID"][0]
+        self.samdb.delete(usr_dn)
+        obj_del = self.search_guid(guid)
+        # restore the user
+        msg = Message()
+        msg.dn = obj_del.dn
+        msg["isDeleted"] = MessageElement([], FLAG_MOD_DELETE, "isDeleted")
+        msg["distinguishedName"] = MessageElement([usr_dn], FLAG_MOD_REPLACE, "distinguishedName")
+        # add some attributes
+        # strip off "sAMAccountType"
+        # for attr in ['dSCorePropagationData', 'primaryGroupID', 'badPwdCount', 'logonCount', 'countryCode', 'pwdLastSet', 'codePage', 'lastLogon', 'adminCount', 'accountExpires', 'operatorCount', 'badPasswordTime', 'lastLogoff']:
+        #     msg[attr] = "0"
+        self.samdb.modify(msg, ["show_deleted:1"])
+        # find restored object and check attributes
+        obj_restore = self.search_guid(guid)
+        keys_restored = obj_restore.keys()
+        restored_user_attr = ['dn', 'objectClass', 'cn', 'distinguishedName', 'instanceType', 'whenCreated',
+                              'whenChanged', 'uSNCreated', 'uSNChanged', 'name', 'objectGUID', 'userAccountControl',
+                              'badPwdCount', 'codePage', 'countryCode', 'badPasswordTime', 'lastLogoff', 'lastLogon',
+                              'pwdLastSet', 'primaryGroupID', 'operatorCount', 'objectSid', 'adminCount',
+                              'accountExpires', 'logonCount', 'sAMAccountName', 'sAMAccountType', 'lastKnownParent',
+                              'objectCategory', 'dSCorePropagationData']
+        print set(restored_user_attr) - set(keys_restored)
+        pass
+
 
 if __name__ == '__main__':
     unittest.main()
