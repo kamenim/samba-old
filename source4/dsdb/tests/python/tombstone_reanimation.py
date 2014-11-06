@@ -23,8 +23,6 @@ import unittest
 
 sys.path.insert(0, "bin/python")
 import samba
-samba.ensure_external_module("testtools", "testtools")
-samba.ensure_external_module("subunit", "subunit/python")
 
 import samba.tests
 import samba.getopt as options
@@ -105,6 +103,19 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
         attr_list |= sub_set
         return attr_list
 
+    @staticmethod
+    def restore_deleted_object(samdb, del_dn, new_dn):
+        """Restores a deleted object
+        :param samdb: SamDB connection to SAM
+        :param del_dn: str Deleted object DN
+        :param new_dn: str Where to restore the object
+        """
+        msg = Message()
+        msg.dn = Dn(samdb, str(del_dn))
+        msg["isDeleted"] = MessageElement([], FLAG_MOD_DELETE, "isDeleted")
+        msg["distinguishedName"] = MessageElement([str(new_dn)], FLAG_MOD_REPLACE, "distinguishedName")
+        samdb.modify(msg, ["show_deleted:1"])
+
     def test_restore_user(self):
         print "Test restored user attributes"
         username = "restore_user"
@@ -113,33 +124,20 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
         self.samdb.add({
             "dn": usr_dn,
             "objectClass": "user",
-            "description": "test user description",
             "sAMAccountName": username})
         obj = self.search_dn(usr_dn)
         guid = obj["objectGUID"][0]
         self.samdb.delete(usr_dn)
         obj_del = self.search_guid(guid)
-        # restore the user
-        msg = Message()
-        msg.dn = obj_del.dn
-        msg["isDeleted"] = MessageElement([], FLAG_MOD_DELETE, "isDeleted")
-        msg["distinguishedName"] = MessageElement([usr_dn], FLAG_MOD_REPLACE, "distinguishedName")
-        # add some attributes
-        # strip off "sAMAccountType"
-        # for attr in ['dSCorePropagationData', 'primaryGroupID', 'badPwdCount', 'logonCount', 'countryCode', 'pwdLastSet', 'codePage', 'lastLogon', 'adminCount', 'accountExpires', 'operatorCount', 'badPasswordTime', 'lastLogoff']:
-        #     msg[attr] = "0"
-        self.samdb.modify(msg, ["show_deleted:1"])
-        # find restored object and check attributes
+        # restore the user and fetch what's restored
+        self.restore_deleted_object(self.samdb, obj_del.dn, usr_dn)
         obj_restore = self.search_guid(guid)
-        keys_restored = obj_restore.keys()
-        restored_user_attr = ['dn', 'objectClass', 'cn', 'distinguishedName', 'instanceType', 'whenCreated',
-                              'whenChanged', 'uSNCreated', 'uSNChanged', 'name', 'objectGUID', 'userAccountControl',
-                              'badPwdCount', 'codePage', 'countryCode', 'badPasswordTime', 'lastLogoff', 'lastLogon',
-                              'pwdLastSet', 'primaryGroupID', 'operatorCount', 'objectSid', 'adminCount',
-                              'accountExpires', 'logonCount', 'sAMAccountName', 'sAMAccountType', 'lastKnownParent',
-                              'objectCategory', 'dSCorePropagationData']
-        print set(restored_user_attr) - set(keys_restored)
-        pass
+        # check original attributes and restored one are same
+        orig_attrs = set(obj.keys())
+        # windows restore more attributes that originally we have
+        orig_attrs.update(['adminCount', 'operatorCount', 'lastKnownParent'])
+        rest_attrs = set(obj_restore.keys())
+        self.assertSetEqual(orig_attrs, rest_attrs)
 
 
 if __name__ == '__main__':
