@@ -116,6 +116,10 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
         msg["distinguishedName"] = MessageElement([str(new_dn)], FLAG_MOD_REPLACE, "distinguishedName")
         samdb.modify(msg, ["show_deleted:1"])
 
+
+class RestoreUserObjectTestCase(RestoredObjectAttributesBaseTestCase):
+    """Test cases for delete/reanimate user objects"""
+
     def test_restore_user(self):
         print "Test restored user attributes"
         username = "restore_user"
