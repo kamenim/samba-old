@@ -2781,14 +2781,24 @@ static PyObject *py_ldb_msg_add(PyLdbMessageObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "O!", &PyLdbMessageElement, &py_element))
 		return NULL;
 
-	el = talloc_reference(msg, py_element->el);
+	el = py_element->el;
 	if (el == NULL) {
-		PyErr_NoMemory();
+		PyErr_SetString(PyExc_ValueError, "Invalid MessageElement object");
 		return NULL;
 	}
 
 	ret = ldb_msg_add(msg, el, el->flags);
 	PyErr_LDB_ERROR_IS_ERR_RAISE(PyExc_LdbError, ret, NULL);
+
+	el = &(msg->elements[msg->num_elements - 1]);
+	if (talloc_reference(msg->elements, el->name) == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
+	if (talloc_reference(msg->elements, el->values) == NULL) {
+		PyErr_NoMemory();
+		return NULL;
+	}
 
 	Py_RETURN_NONE;
 }
