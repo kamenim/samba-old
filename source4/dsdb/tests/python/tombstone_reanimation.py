@@ -74,32 +74,31 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
         self.assertEquals(len(res), 1)
         return res[0]
 
-    def _class_must_attrs(self, class_name):
+    def _attributes_for_class(self, class_name, attr_names):
         res = self.samdb.search(self.schema_dn,
                                 expression="(&(objectClass=classSchema)(lDAPDisplayName=%s))" % class_name,
-                                attrs=["subClassOf", "mustContain", "systemMustContain",
-                                       "auxiliaryClass", "systemAuxiliaryClass"])
+                                attrs=["subClassOf",
+                                       "auxiliaryClass", "systemAuxiliaryClass"].append(attr_names))
         self.assertEqual(len(res), 1)
         attr_set = set()
         # make the list from immediate class
-        if "mustContain" in res[0]:
-            attr_set |= set([attr for attr in res[0]["mustContain"]])
-        if "systemMustContain" in res[0]:
-            attr_set |= set([attr for attr in res[0]["systemMustContain"]])
+        for attr_name in attr_names:
+            if attr_name in res[0]:
+                attr_set |= set([attr for attr in res[0][attr_name]])
         # now trace Auxiliary classes
         if "auxiliaryClass" in res[0]:
             for aux_class in res[0]["auxiliaryClass"]:
-                attr_set |= self.make_class_all_must_list(aux_class)
+                attr_set |= self.walk_class_hierarchy(aux_class, attr_names)
         if "systemAuxiliaryClass" in res[0]:
             for aux_class in res[0]["systemAuxiliaryClass"]:
-                attr_set |= self.make_class_all_must_list(aux_class)
+                attr_set |= self.walk_class_hierarchy(aux_class, attr_names)
         return str(res[0]["subClassOf"]), attr_set
 
-    def make_class_all_must_list(self, class_name):
-        (parent_class, attr_list) = self._class_must_attrs(class_name)
+    def walk_class_hierarchy(self, class_name, attr_names):
+        (parent_class, attr_list) = self._attributes_for_class(class_name, attr_names)
         sub_set = set()
         if class_name != "top":
-            sub_set = self.make_class_all_must_list(parent_class)
+            sub_set = self.walk_class_hierarchy(parent_class, attr_names)
         attr_list |= sub_set
         return attr_list
 
