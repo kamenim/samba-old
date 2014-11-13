@@ -103,6 +103,31 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
         attr_list |= sub_set
         return attr_list
 
+    def assertAttributesEqual(self, obj_orig, attrs_orig, obj_restored, attrs_rest):
+        self.assertSetEqual(attrs_orig, attrs_rest)
+        # remove volatile attributes, they can't be equal
+        attrs_orig -= set(["uSNChanged", "dSCorePropagationData", "whenChanged"])
+        for attr in attrs_orig:
+            # convert original attr value to ldif
+            orig_val = obj_orig.get(attr)
+            if orig_val is None:
+                continue
+            if not isinstance(orig_val, MessageElement):
+                orig_val = MessageElement(str(orig_val), 0, attr    )
+            m = Message()
+            m.add(orig_val)
+            orig_ldif = self.samdb.write_ldif(m, 0)
+            # convert restored attr value to ldif
+            rest_val = obj_restored.get(attr)
+            self.assertIsNotNone(rest_val)
+            m = Message()
+            if not isinstance(rest_val, MessageElement):
+                rest_val = MessageElement(str(rest_val), 0, attr)
+            m.add(rest_val)
+            rest_ldif = self.samdb.write_ldif(m, 0)
+            # compare generated ldif's
+            self.assertEqual(orig_ldif.lower(), rest_ldif.lower())
+
     @staticmethod
     def restore_deleted_object(samdb, del_dn, new_dn):
         """Restores a deleted object
@@ -142,6 +167,83 @@ class RestoreUserObjectTestCase(RestoredObjectAttributesBaseTestCase):
         orig_attrs.update(['adminCount', 'operatorCount', 'lastKnownParent'])
         rest_attrs = set(obj_restore.keys())
         self.assertSetEqual(orig_attrs, rest_attrs)
+
+
+class RestoreGroupObjectTestCase(RestoredObjectAttributesBaseTestCase):
+    """Test different scenarios for delete/reanimate group objects"""
+
+    def _make_object_dn(self, name):
+        return "cn=%s,cn=users,%s" % (name, self.base_dn)
+
+    def _create_test_user(self, user_name):
+        user_dn = self._make_object_dn(user_name)
+        ldif = {
+            "dn": user_dn,
+            "objectClass": "user",
+            "sAMAccountName": user_name,
+        }
+        # delete an object if leftover from previous test
+        samba.tests.delete_force(self.samdb, user_dn)
+        # finally, create the group
+        self.samdb.add(ldif)
+        return self.search_dn(user_dn)
+
+    def _create_test_group(self, group_name, members=None):
+        group_dn = self._make_object_dn(group_name)
+        ldif = {
+            "dn": group_dn,
+            "objectClass": "group",
+            "sAMAccountName": group_name,
+        }
+        try:
+            ldif["member"] = [str(usr_dn) for usr_dn in members]
+        except TypeError:
+            pass
+        # delete an object if leftover from previous test
+        samba.tests.delete_force(self.samdb, group_dn)
+        # finally, create the group
+        self.samdb.add(ldif)
+        return self.search_dn(group_dn)
+
+    def test_plain_group(self):
+        print "Test restored Group attributes"
+        # create test group
+        obj = self._create_test_group("r_group")
+        guid = obj["objectGUID"][0]
+        # delete the group
+        self.samdb.delete(str(obj.dn))
+        obj_del = self.search_guid(guid)
+        # restore the Group and fetch what's restored
+        self.restore_deleted_object(self.samdb, obj_del.dn, obj.dn)
+        obj_restore = self.search_guid(guid)
+        # check original attributes and restored one are same
+        attr_orig = set(obj.keys())
+        # windows restore more attributes that originally we have
+        attr_orig.update(['adminCount', 'operatorCount', 'lastKnownParent'])
+        attr_rest = set(obj_restore.keys())
+        self.assertAttributesEqual(obj, attr_orig, obj_restore, attr_rest)
+
+    def test_group_with_members(self):
+        print "Test restored Group with members attributes"
+        # create test group
+        usr1 = self._create_test_user("r_user_1")
+        usr2 = self._create_test_user("r_user_2")
+        obj = self._create_test_group("r_group", [usr1.dn, usr2.dn])
+        guid = obj["objectGUID"][0]
+        # delete the group
+        self.samdb.delete(str(obj.dn))
+        obj_del = self.search_guid(guid)
+        # restore the Group and fetch what's restored
+        self.restore_deleted_object(self.samdb, obj_del.dn, obj.dn)
+        obj_restore = self.search_guid(guid)
+        # check original attributes and restored one are same
+        attr_orig = set(obj.keys())
+        # windows restore more attributes that originally we have
+        attr_orig.update(['adminCount', 'operatorCount', 'lastKnownParent'])
+        # and does not restore following attributes
+        attr_orig.remove("member")
+        attr_rest = set(obj_restore.keys())
+        self.assertAttributesEqual(obj, attr_orig, obj_restore, attr_rest)
 
 
 if __name__ == '__main__':
