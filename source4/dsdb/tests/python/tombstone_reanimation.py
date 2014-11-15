@@ -74,6 +74,13 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
         self.assertEquals(len(res), 1)
         return res[0]
 
+    def _create_object(self, msg):
+        """:param msg: dict with dn and attributes to create an object from"""
+        # delete an object if leftover from previous test
+        samba.tests.delete_force(self.samdb, msg['dn'])
+        self.samdb.add(msg)
+        return self.search_dn(msg['dn'])
+
     def _attributes_for_class(self, class_name, attr_names):
         res = self.samdb.search(self.schema_dn,
                                 expression="(&(objectClass=classSchema)(lDAPDisplayName=%s))" % class_name,
@@ -242,6 +249,61 @@ class RestoreGroupObjectTestCase(RestoredObjectAttributesBaseTestCase):
         # and does not restore following attributes
         attr_orig.remove("member")
         attr_rest = set(obj_restore.keys())
+        self.assertAttributesEqual(obj, attr_orig, obj_restore, attr_rest)
+
+
+class RestoreContainerObjectTestCase(RestoredObjectAttributesBaseTestCase):
+    """Test different scenarios for delete/reanimate OU/container objects"""
+
+    def _create_test_ou(self, rdn, name=None, description=None):
+        ou_dn = "OU=%s,%s" % (rdn, self.base_dn)
+        # delete an object if leftover from previous test
+        samba.tests.delete_force(self.samdb, ou_dn)
+        # create ou and return created object
+        self.samdb.create_ou(ou_dn, name="r_ou_name", description="r_ou description")
+        return self.search_dn(ou_dn)
+
+    def test_ou_with_name_description(self):
+        print "Test OU reanimation"
+        # create OU to test with
+        obj = self._create_test_ou(rdn="r_ou",
+                                   name="r_ou name",
+                                   description="r_ou description")
+        guid = obj["objectGUID"][0]
+        # delete the object
+        self.samdb.delete(str(obj.dn))
+        obj_del = self.search_guid(guid)
+        # restore the Object and fetch what's restored
+        self.restore_deleted_object(self.samdb, obj_del.dn, obj.dn)
+        obj_restore = self.search_guid(guid)
+        # check original attributes and restored one are same
+        attr_orig = set(obj.keys())
+        attr_rest = set(obj_restore.keys())
+        # windows restore more attributes that originally we have
+        attr_orig.update(["lastKnownParent"])
+        # and does not restore following attributes
+        attr_orig -= {"description"}
+        self.assertAttributesEqual(obj, attr_orig, obj_restore, attr_rest)
+
+    def test_container(self):
+        print "Test Container reanimation"
+        # create test Container
+        obj = self._create_object({
+            "dn": "CN=r_container,CN=Users,%s" % self.base_dn,
+            "objectClass": "container"
+        })
+        guid = obj["objectGUID"][0]
+        # delete the object
+        self.samdb.delete(str(obj.dn))
+        obj_del = self.search_guid(guid)
+        # restore the Object and fetch what's restored
+        self.restore_deleted_object(self.samdb, obj_del.dn, obj.dn)
+        obj_restore = self.search_guid(guid)
+        # check original attributes and restored one are same
+        attr_orig = set(obj.keys())
+        attr_rest = set(obj_restore.keys())
+        # windows restore more attributes that originally we have
+        attr_orig.update(["lastKnownParent"])
         self.assertAttributesEqual(obj, attr_orig, obj_restore, attr_rest)
 
 
