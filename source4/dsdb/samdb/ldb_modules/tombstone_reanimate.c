@@ -219,12 +219,10 @@ static int _tr_do_modify(struct ldb_module *module, struct ldb_request *parent_r
 	return ret;
 }
 
-static int _tr_restore_attributes(struct tr_context *ac, struct ldb_context *ldb,
-				  struct ldb_message *cur_msg, struct ldb_message *new_msg)
+static int _tr_restore_attributes(struct ldb_context *ldb, struct ldb_message *cur_msg, struct ldb_message *new_msg)
 {
 	int				ret;
 	struct ldb_message_element	*el;
-	const struct dsdb_class 	*objectclass;
 	uint32_t			account_type, user_account_control;
 
 
@@ -233,25 +231,6 @@ static int _tr_restore_attributes(struct tr_context *ac, struct ldb_context *ldb
 	if (ret != LDB_SUCCESS) {
 		ldb_asprintf_errstring(ldb, "Failed to reset isRecycled attribute: %s", ldb_strerror(ret));
 		return LDB_ERR_OPERATIONS_ERROR;
-	}
-
-	/* restore showInAdvancedViewOnly */
-	if (ldb_msg_find_element(cur_msg, "showInAdvancedViewOnly") == NULL) {
-		el = ldb_msg_find_element(cur_msg, "objectClass");
-		if (el == NULL) {
-			return ldb_error(ldb, LDB_ERR_OPERATIONS_ERROR,
-					 "reanimate: No 'objectClass' attribute found!");
-		}
-		objectclass = dsdb_get_last_structural_class(ac->schema, el);
-		if (objectclass == NULL) {
-			return ldb_error(ldb, LDB_ERR_OPERATIONS_ERROR,
-					 "reanimate: Failed to find structural class!");
-		}
-		if (objectclass->defaultHidingValue == true) {
-			ldb_msg_add_string(new_msg, "showInAdvancedViewOnly", "TRUE");
-			el = ldb_msg_find_element(new_msg, "showInAdvancedViewOnly");
-			el->flags = LDB_FLAG_MOD_REPLACE;
-		}
 	}
 
 	/* objectClass is USER */
@@ -419,7 +398,7 @@ static int tombstone_reanimate_modify(struct ldb_module *module, struct ldb_requ
 	ldb_msg_remove_attr(msg, "distinguishedName");
 
 	/* restore attributed depending on objectClass */
-	ret = _tr_restore_attributes(ac, ldb, res_obj->msgs[0], msg);
+	ret = _tr_restore_attributes(ldb, res_obj->msgs[0], msg);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}
