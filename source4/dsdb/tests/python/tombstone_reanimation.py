@@ -304,6 +304,8 @@ class RestoreContainerObjectTestCase(RestoredObjectAttributesBaseTestCase):
         attr_rest = set(obj_restore.keys())
         # windows restore more attributes that originally we have
         attr_orig.update(["lastKnownParent"])
+        # and does not restore following attributes
+        attr_orig -= {"showInAdvancedViewOnly"}
         self.assertAttributesEqual(obj, attr_orig, obj_restore, attr_rest)
 
 
