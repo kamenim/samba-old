@@ -4,8 +4,6 @@
 import sys
 sys.path.insert(0, "bin/python")
 
-from samba.tests.subunitrun import TestProgram
-
 from ldb import SCOPE_BASE, LdbError, Message, MessageElement, Dn, FLAG_MOD_ADD, FLAG_MOD_DELETE, FLAG_MOD_REPLACE
 from ldb import ERR_NO_SUCH_OBJECT, ERR_NOT_ALLOWED_ON_NON_LEAF, ERR_ENTRY_ALREADY_EXISTS, ERR_ATTRIBUTE_OR_VALUE_EXISTS
 from ldb import ERR_UNWILLING_TO_PERFORM, ERR_OPERATIONS_ERROR
@@ -514,4 +512,5 @@ class BasicUndeleteTests(BaseDeleteTests):
 
 
 if __name__ == '__main__':
-    TestProgram(module=__name__)
+    import unittest
+    unittest.main()
