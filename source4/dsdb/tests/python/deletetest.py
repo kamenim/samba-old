@@ -1,44 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import optparse
 import sys
-import os
-
 sys.path.insert(0, "bin/python")
-import samba
 
-from samba.tests.subunitrun import SubunitOptions, TestProgram
+from samba.tests.subunitrun import TestProgram
 
-import samba.getopt as options
-
-from samba.auth import system_session
 from ldb import SCOPE_BASE, LdbError, Message, MessageElement, Dn, FLAG_MOD_ADD, FLAG_MOD_DELETE, FLAG_MOD_REPLACE
 from ldb import ERR_NO_SUCH_OBJECT, ERR_NOT_ALLOWED_ON_NON_LEAF, ERR_ENTRY_ALREADY_EXISTS, ERR_ATTRIBUTE_OR_VALUE_EXISTS
 from ldb import ERR_UNWILLING_TO_PERFORM, ERR_OPERATIONS_ERROR
-from samba.samdb import SamDB
 from samba.tests import delete_force
 from basetest import SamdbConnectBaseTest
 
-parser = optparse.OptionParser("deletetest.py [options] <host|file>")
-sambaopts = options.SambaOptions(parser)
-parser.add_option_group(sambaopts)
-parser.add_option_group(options.VersionOptions(parser))
-# use command line creds if available
-credopts = options.CredentialsOptions(parser)
-parser.add_option_group(credopts)
-subunitopts = SubunitOptions(parser)
-parser.add_option_group(subunitopts)
-opts, args = parser.parse_args()
-
-if len(args) < 1:
-    parser.print_usage()
-    sys.exit(1)
-
-host = args[0]
-
-lp = sambaopts.get_loadparm()
-creds = credopts.get_credentials(lp)
 
 class BaseDeleteTests(SamdbConnectBaseTest):
 
@@ -540,11 +513,5 @@ class BasicUndeleteTests(BaseDeleteTests):
         delete_force(self.ldb, c4)
 
 
-
-if not "://" in host:
-    if os.path.isfile(host):
-        host = "tdb://%s" % host
-    else:
-        host = "ldap://%s" % host
-
-TestProgram(module=__name__, opts=subunitopts)
+if __name__ == '__main__':
+    TestProgram(module=__name__)
