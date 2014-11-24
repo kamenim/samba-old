@@ -18,6 +18,7 @@ from ldb import ERR_NO_SUCH_OBJECT, ERR_NOT_ALLOWED_ON_NON_LEAF, ERR_ENTRY_ALREA
 from ldb import ERR_UNWILLING_TO_PERFORM, ERR_OPERATIONS_ERROR
 from samba.samdb import SamDB
 from samba.tests import delete_force
+from basetest import SamdbConnectBaseTest
 
 parser = optparse.OptionParser("deletetest.py [options] <host|file>")
 sambaopts = options.SambaOptions(parser)
@@ -39,35 +40,14 @@ host = args[0]
 lp = sambaopts.get_loadparm()
 creds = credopts.get_credentials(lp)
 
-class BaseDeleteTests(samba.tests.TestCase):
-
-    def GUID_string(self, guid):
-        return self.ldb.schema_format_value("objectGUID", guid)
+class BaseDeleteTests(SamdbConnectBaseTest):
 
     def setUp(self):
         super(BaseDeleteTests, self).setUp()
-        self.ldb = SamDB(host, credentials=creds, session_info=system_session(lp), lp=lp)
+        self.ldb = self.samdb
 
         self.base_dn = self.ldb.domain_dn()
         self.configuration_dn = self.ldb.get_config_basedn().get_linearized()
-
-    def search_guid(self, guid):
-        print "SEARCH by GUID %s" % self.GUID_string(guid)
-
-        res = self.ldb.search(base="<GUID=%s>" % self.GUID_string(guid),
-                         scope=SCOPE_BASE, controls=["show_deleted:1"])
-        self.assertEquals(len(res), 1)
-        return res[0]
-
-    def search_dn(self,dn):
-        print "SEARCH by DN %s" % dn
-
-        res = self.ldb.search(expression="(objectClass=*)",
-                         base=dn,
-                         scope=SCOPE_BASE,
-                         controls=["show_deleted:1"])
-        self.assertEquals(len(res), 1)
-        return res[0]
 
 
 class BasicDeleteTests(BaseDeleteTests):
