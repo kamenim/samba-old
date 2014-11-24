@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+# Running the test from command line:
+# DC_SERVER=st/dc/private/sam.ldb DC_USERNAME=Administrator DC_PASSWORD=333 python source4/dsdb/tests/python/deletetest.py
+#
 
 import sys
 sys.path.insert(0, "bin/python")
