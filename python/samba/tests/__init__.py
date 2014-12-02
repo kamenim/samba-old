@@ -246,7 +246,7 @@ def connect_samdb_env(env_url, env_username, env_password, lp=None):
     """
     samdb_url = env_get_var_value(env_url)
     creds = credentials.Credentials()
-    if lp:
+    if lp is not None:
         creds.guess(lp)
     creds.set_username(env_get_var_value(env_username))
     creds.set_password(env_get_var_value(env_password))
