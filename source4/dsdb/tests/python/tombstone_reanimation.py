@@ -24,6 +24,7 @@ import unittest
 
 sys.path.insert(0, "bin/python")
 import samba
+from samba.param import LoadParm
 
 import samba.tests
 import samba.getopt as options
@@ -41,7 +42,8 @@ class RestoredObjectAttributesBaseTestCase(samba.tests.TestCase):
     def setUp(self):
         super(RestoredObjectAttributesBaseTestCase, self).setUp()
         # load LoadParm
-        lp = options.SambaOptions(optparse.OptionParser()).get_loadparm()
+        # lp = self.get_loadparm(True)
+	lp = LoadParm()
         self.samdb = samba.tests.connect_samdb_env("DC_SERVER", "DC_USERNAME", "DC_PASSWORD", lp=lp)
         self.base_dn = self.samdb.domain_dn()
         self.schema_dn = self.samdb.get_schema_basedn().get_linearized()
