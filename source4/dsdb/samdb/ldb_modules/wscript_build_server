@@ -364,3 +364,13 @@ bld.SAMBA_MODULE('ldb_dirsync',
 	internal_module=False,
 	deps='talloc samba-security samdb DSDB_MODULE_HELPERS'
 	)
+
+
+bld.SAMBA_MODULE('tombstone_reanimate',
+	source='tombstone_reanimate.c',
+	subsystem='ldb',
+	init_function='ldb_tombstone_reanimate_module_init',
+	module_init_name='ldb_init_module',
+	internal_module=False,
+	deps='talloc samba-util DSDB_MODULE_HELPERS'
+	)

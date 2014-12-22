@@ -1528,7 +1528,7 @@ static int samldb_user_account_control_change(struct samldb_ctx *ac)
 						     "lockoutTime", 0);
 	old_is_critical = ldb_msg_find_attr_as_bool(res->msgs[0],
 						    "isCriticalSystemObject", 0);
-	/* When we do not have objectclass "omputer" we cannot switch to a (read-only) DC */
+	/* When we do not have objectclass "computer" we cannot switch to a (read-only) DC */
 	el = ldb_msg_find_element(res->msgs[0], "objectClass");
 	if (el == NULL) {
 		return ldb_operr(ldb);
@@ -2444,6 +2444,7 @@ static int samldb_modify(struct ldb_module *module, struct ldb_request *req)
 	struct ldb_context *ldb;
 	struct samldb_ctx *ac;
 	struct ldb_message_element *el, *el2;
+	struct ldb_control *is_undelete;
 	bool modified = false;
 	int ret;
 
@@ -2454,6 +2455,13 @@ static int samldb_modify(struct ldb_module *module, struct ldb_request *req)
 
 	ldb = ldb_module_get_ctx(module);
 
+	/*
+	 * we are going to need some special handling if in Undelete call.
+	 * Since tombstone_reanimate module will restore certain attributes,
+	 * we need to relax checks for: sAMAccountType, primaryGroupID
+	 */
+	is_undelete = ldb_request_get_control(req, DSDB_CONTROL_RESTORE_TOMBSTONE_OID);
+
 	/* make sure that "objectSid" is not specified */
 	el = ldb_msg_find_element(req->op.mod.message, "objectSid");
 	if (el != NULL) {
@@ -2463,12 +2471,14 @@ static int samldb_modify(struct ldb_module *module, struct ldb_request *req)
 			return LDB_ERR_UNWILLING_TO_PERFORM;
 		}
 	}
-	/* make sure that "sAMAccountType" is not specified */
-	el = ldb_msg_find_element(req->op.mod.message, "sAMAccountType");
-	if (el != NULL) {
-		ldb_set_errstring(ldb,
-				  "samldb: sAMAccountType must not be specified!");
-		return LDB_ERR_UNWILLING_TO_PERFORM;
+	if (is_undelete == NULL) {
+		/* make sure that "sAMAccountType" is not specified */
+		el = ldb_msg_find_element(req->op.mod.message, "sAMAccountType");
+		if (el != NULL) {
+			ldb_set_errstring(ldb,
+					  "samldb: sAMAccountType must not be specified!");
+			return LDB_ERR_UNWILLING_TO_PERFORM;
+		}
 	}
 	/* make sure that "isCriticalSystemObject" is not specified */
 	el = ldb_msg_find_element(req->op.mod.message, "isCriticalSystemObject");
@@ -2512,11 +2522,13 @@ static int samldb_modify(struct ldb_module *module, struct ldb_request *req)
 		return ldb_operr(ldb);
 	}
 
-	el = ldb_msg_find_element(ac->msg, "primaryGroupID");
-	if (el != NULL) {
-		ret = samldb_prim_group_trigger(ac);
-		if (ret != LDB_SUCCESS) {
-			return ret;
+	if (is_undelete == NULL) {
+		el = ldb_msg_find_element(ac->msg, "primaryGroupID");
+		if (el != NULL) {
+			ret = samldb_prim_group_trigger(ac);
+			if (ret != LDB_SUCCESS) {
+				return ret;
+			}
 		}
 	}
 
@@ -2724,8 +2736,16 @@ static int check_rename_constraints(struct ldb_message *msg,
 	if (ldb_request_get_control(ac->req, LDB_CONTROL_RELAX_OID) != NULL) {
 		return LDB_SUCCESS;
 	}
+
 	if (ldb_msg_find_attr_as_bool(msg, "isDeleted", false)) {
-		return LDB_SUCCESS;
+		/*
+		 * check originating request if we are supposed
+		 * to "see" this record in first place.
+		 */
+		if (ldb_request_get_control(ac->req, LDB_CONTROL_SHOW_DELETED_OID) == NULL) {
+			return LDB_ERR_NO_SUCH_OBJECT;
+		}
+		return LDB_ERR_UNWILLING_TO_PERFORM;
 	}
 
 	/* Objects under CN=System */
@@ -2823,7 +2843,8 @@ static int check_rename_constraints(struct ldb_message *msg,
 				talloc_free(dn2);
 			}
 
-			if (!limited_move) {
+			if (!limited_move
+			    && ldb_request_get_control(ac->req, DSDB_CONTROL_RESTORE_TOMBSTONE_OID) == NULL) {
 				ldb_asprintf_errstring(ldb,
 						       "subtree_rename: Cannot move %s to %s in config partition",
 						       ldb_dn_get_linearized(olddn), ldb_dn_get_linearized(newdn));

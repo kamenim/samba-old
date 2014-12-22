@@ -78,13 +78,14 @@ static void smb_stat_ex_from_stat(struct stat_ex *dst, const struct stat *src)
 
 static struct glfs_preopened {
 	char *volume;
+	char *connectpath;
 	glfs_t *fs;
 	int ref;
 	struct glfs_preopened *next, *prev;
 } *glfs_preopened;
 
 
-static int glfs_set_preopened(const char *volume, glfs_t *fs)
+static int glfs_set_preopened(const char *volume, const char *connectpath, glfs_t *fs)
 {
 	struct glfs_preopened *entry = NULL;
 
@@ -101,6 +102,13 @@ static int glfs_set_preopened(const char *volume, glfs_t *fs)
 		return -1;
 	}
 
+	entry->connectpath = talloc_strdup(entry, connectpath);
+	if (entry->connectpath == NULL) {
+		talloc_free(entry);
+		errno = ENOMEM;
+		return -1;
+	}
+
 	entry->fs = fs;
 	entry->ref = 1;
 
@@ -109,12 +117,14 @@ static int glfs_set_preopened(const char *volume, glfs_t *fs)
 	return 0;
 }
 
-static glfs_t *glfs_find_preopened(const char *volume)
+static glfs_t *glfs_find_preopened(const char *volume, const char *connectpath)
 {
 	struct glfs_preopened *entry = NULL;
 
 	for (entry = glfs_preopened; entry; entry = entry->next) {
-		if (strcmp(entry->volume, volume) == 0) {
+		if (strcmp(entry->volume, volume) == 0 &&
+		    strcmp(entry->connectpath, connectpath) == 0)
+		{
 			entry->ref++;
 			return entry->fs;
 		}
@@ -176,7 +186,7 @@ static int vfs_gluster_connect(struct vfs_handle_struct *handle,
 		volume = service;
 	}
 
-	fs = glfs_find_preopened(volume);
+	fs = glfs_find_preopened(volume, handle->conn->connectpath);
 	if (fs) {
 		goto done;
 	}
@@ -200,6 +210,17 @@ static int vfs_gluster_connect(struct vfs_handle_struct *handle,
 		goto done;
 	}
 
+
+	ret = glfs_set_xlator_option(fs, "*-snapview-client",
+				     "snapdir-entry-path",
+				     handle->conn->connectpath);
+	if (ret < 0) {
+		DEBUG(0, ("%s: Failed to set xlator option:"
+			  " snapdir-entry-path\n", volume));
+		glfs_fini(fs);
+		return -1;
+	}
+
 	ret = glfs_set_logging(fs, logfile, loglevel);
 	if (ret < 0) {
 		DEBUG(0, ("%s: Failed to set logfile %s loglevel %d\n",
@@ -214,7 +235,7 @@ static int vfs_gluster_connect(struct vfs_handle_struct *handle,
 		goto done;
 	}
 
-	ret = glfs_set_preopened(volume, fs);
+	ret = glfs_set_preopened(volume, handle->conn->connectpath, fs);
 	if (ret < 0) {
 		DEBUG(0, ("%s: Failed to register volume (%s)\n",
 			  volume, strerror(errno)));
@@ -1006,6 +1027,8 @@ static int vfs_gluster_set_offline(struct vfs_handle_struct *handle,
 #define GLUSTER_ACL_HEADER_SIZE    4
 #define GLUSTER_ACL_ENTRY_SIZE     8
 
+#define GLUSTER_ACL_SIZE(n)       (GLUSTER_ACL_HEADER_SIZE + (n * GLUSTER_ACL_ENTRY_SIZE))
+
 static SMB_ACL_T gluster_to_smb_acl(const char *buf, size_t xattr_size,
 				    TALLOC_CTX *mem_ctx)
 {
@@ -1275,7 +1298,7 @@ static SMB_ACL_T vfs_gluster_sys_acl_get_file(struct vfs_handle_struct *handle,
 	struct smb_acl_t *result;
 	char *buf;
 	const char *key;
-	ssize_t ret;
+	ssize_t ret, size = GLUSTER_ACL_SIZE(20);
 
 	switch (type) {
 	case SMB_ACL_TYPE_ACCESS:
@@ -1289,13 +1312,22 @@ static SMB_ACL_T vfs_gluster_sys_acl_get_file(struct vfs_handle_struct *handle,
 		return NULL;
 	}
 
-	ret = glfs_getxattr(handle->data, path_p, key, 0, 0);
-	if (ret <= 0) {
+	buf = alloca(size);
+	if (!buf) {
 		return NULL;
 	}
 
-	buf = alloca(ret);
-	ret = glfs_getxattr(handle->data, path_p, key, buf, ret);
+	ret = glfs_getxattr(handle->data, path_p, key, buf, size);
+	if (ret == -1 && errno == ERANGE) {
+		ret = glfs_getxattr(handle->data, path_p, key, 0, 0);
+		if (ret > 0) {
+			buf = alloca(ret);
+			if (!buf) {
+				return NULL;
+			}
+			ret = glfs_getxattr(handle->data, path_p, key, buf, ret);
+		}
+	}
 	if (ret <= 0) {
 		return NULL;
 	}
@@ -1310,18 +1342,29 @@ static SMB_ACL_T vfs_gluster_sys_acl_get_fd(struct vfs_handle_struct *handle,
 					    TALLOC_CTX *mem_ctx)
 {
 	struct smb_acl_t *result;
-	int ret;
+	ssize_t ret, size = GLUSTER_ACL_SIZE(20);
 	char *buf;
 	glfs_fd_t *glfd;
 
 	glfd = *(glfs_fd_t **)VFS_FETCH_FSP_EXTENSION(handle, fsp);
-	ret = glfs_fgetxattr(glfd, "system.posix_acl_access", 0, 0);
-	if (ret <= 0) {
+
+	buf = alloca(size);
+	if (!buf) {
 		return NULL;
 	}
 
-	buf = alloca(ret);
-	ret = glfs_fgetxattr(glfd, "system.posix_acl_access", buf, ret);
+	ret = glfs_fgetxattr(glfd, "system.posix_acl_access", buf, size);
+	if (ret == -1 && errno == ERANGE) {
+		ret = glfs_fgetxattr(glfd, "system.posix_acl_access", 0, 0);
+		if (ret > 0) {
+			buf = alloca(ret);
+			if (!buf) {
+				return NULL;
+			}
+			ret = glfs_fgetxattr(glfd, "system.posix_acl_access",
+					     buf, ret);
+		}
+	}
 	if (ret <= 0) {
 		return NULL;
 	}

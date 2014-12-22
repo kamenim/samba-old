@@ -85,7 +85,8 @@ static bool leases_db_key(TALLOC_CTX *mem_ctx,
 NTSTATUS leases_db_add(const struct GUID *client_guid,
 		       const struct smb2_lease_key *lease_key,
 		       const struct file_id *id,
-		       const char *filename,
+		       const char *servicepath,
+		       const char *base_name,
 		       const char *stream_name)
 {
 	TDB_DATA db_key, db_value;
@@ -94,6 +95,7 @@ NTSTATUS leases_db_add(const struct GUID *client_guid,
 	NTSTATUS status;
 	bool ok;
 	struct leases_db_value new_value;
+	struct leases_db_file new_file;
 	struct leases_db_value *value = NULL;
 	enum ndr_err_code ndr_err;
 
@@ -139,30 +141,39 @@ NTSTATUS leases_db_add(const struct GUID *client_guid,
 		}
 
 		/* id must be unique. */
-		for (i = 0; i < value->num_file_ids; i++) {
-			if (file_id_equal(id, &value->ids[i])) {
+		for (i = 0; i < value->num_files; i++) {
+			if (file_id_equal(id, &value->files[i].id)) {
 				status = NT_STATUS_OBJECT_NAME_COLLISION;
 				goto out;
 			}
 		}
 
-		value->ids = talloc_realloc(value, value->ids, struct file_id,
-					value->num_file_ids + 1);
-		if (value->ids == NULL) {
+		value->files = talloc_realloc(value, value->files,
+					struct leases_db_file,
+					value->num_files + 1);
+		if (value->files == NULL) {
 			status = NT_STATUS_NO_MEMORY;
 			goto out;
 		}
-		value->ids[value->num_file_ids] = *id;
-		value->num_file_ids += 1;
+		value->files[value->num_files].id = *id;
+		value->files[value->num_files].servicepath = servicepath;
+		value->files[value->num_files].base_name = base_name;
+		value->files[value->num_files].stream_name = stream_name;
+		value->num_files += 1;
 
 	} else {
 		DEBUG(10, ("%s: new record\n", __func__));
 
-		new_value = (struct leases_db_value) {
-			.num_file_ids = 1,
-			.ids = discard_const_p(struct file_id, id),
-			.filename = filename,
+		new_file = (struct leases_db_file) {
+			.id = *id,
+			.servicepath = servicepath,
+			.base_name = base_name,
 			.stream_name = stream_name,
+		};
+
+		new_value = (struct leases_db_value) {
+			.num_files = 1,
+			.files = &new_file,
 		};
 		value = &new_value;
 	}
@@ -252,21 +263,21 @@ NTSTATUS leases_db_del(const struct GUID *client_guid,
 	}
 
 	/* id must exist. */
-	for (i = 0; i < value->num_file_ids; i++) {
-		if (file_id_equal(id, &value->ids[i])) {
+	for (i = 0; i < value->num_files; i++) {
+		if (file_id_equal(id, &value->files[i].id)) {
 			break;
 		}
 	}
 
-	if (i == value->num_file_ids) {
+	if (i == value->num_files) {
 		status = NT_STATUS_NOT_FOUND;
 		goto out;
 	}
 
-	value->ids[i] = value->ids[value->num_file_ids-1];
-	value->num_file_ids -= 1;
+	value->files[i] = value->files[value->num_files-1];
+	value->num_files -= 1;
 
-	if (value->num_file_ids == 0) {
+	if (value->num_files == 0) {
 		DEBUG(10, ("%s: deleting record\n", __func__));
 		status = dbwrap_record_delete(rec);
 	} else {
@@ -303,9 +314,9 @@ NTSTATUS leases_db_del(const struct GUID *client_guid,
 }
 
 struct leases_db_fetch_state {
-	void (*parser)(uint32_t num_file_ids,
-			struct file_id *ids, const char *filename,
-			const char *stream_name, void *private_data);
+	void (*parser)(uint32_t num_files,
+			const struct leases_db_file *files,
+			void *private_data);
 	void *private_data;
 	NTSTATUS status;
 };
@@ -340,8 +351,8 @@ static void leases_db_parser(TDB_DATA key, TDB_DATA data, void *private_data)
 		NDR_PRINT_DEBUG(leases_db_value, value);
 	}
 
-	state->parser(value->num_file_ids,
-			value->ids, value->filename, value->stream_name,
+	state->parser(value->num_files,
+			value->files,
 			state->private_data);
 
 	TALLOC_FREE(value);
@@ -350,10 +361,8 @@ static void leases_db_parser(TDB_DATA key, TDB_DATA data, void *private_data)
 
 NTSTATUS leases_db_parse(const struct GUID *client_guid,
 			 const struct smb2_lease_key *lease_key,
-			 void (*parser)(uint32_t num_file_ids,
-					struct file_id *ids,
-					const char *filename,
-					const char *stream_name,
+			 void (*parser)(uint32_t num_files,
+					const struct leases_db_file *files,
 					void *private_data),
 			 void *private_data)
 {
@@ -389,6 +398,7 @@ NTSTATUS leases_db_parse(const struct GUID *client_guid,
 NTSTATUS leases_db_rename(const struct GUID *client_guid,
 		       const struct smb2_lease_key *lease_key,
 		       const struct file_id *id,
+		       const char *servicename_new,
 		       const char *filename_new,
 		       const char *stream_name_new)
 {
@@ -404,6 +414,27 @@ NTSTATUS leases_db_rename(const struct GUID *client_guid,
 	return leases_db_add(client_guid,
 				lease_key,
 				id,
+				servicename_new,
 				filename_new,
 				stream_name_new);
+}
+
+NTSTATUS leases_db_copy_file_ids(TALLOC_CTX *mem_ctx,
+			uint32_t num_files,
+			const struct leases_db_file *files,
+			struct file_id **pp_ids)
+{
+	uint32_t i;
+	struct file_id *ids = talloc_array(mem_ctx,
+				struct file_id,
+				num_files);
+	if (ids == NULL) {
+		return NT_STATUS_NO_MEMORY;
+	}
+
+	for (i = 0; i < num_files; i++) {
+		ids[i] = files[i].id;
+	}
+	*pp_ids = ids;
+	return NT_STATUS_OK;
 }

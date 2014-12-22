@@ -24,11 +24,13 @@
 struct GUID;
 struct smb2_lease_key;
 struct file_id;
+struct leases_db_file;
 
 bool leases_db_init(bool read_only);
 NTSTATUS leases_db_add(const struct GUID *client_guid,
 		       const struct smb2_lease_key *lease_key,
 		       const struct file_id *id,
+		       const char *servicepath,
 		       const char *filename,
 		       const char *stream_name);
 NTSTATUS leases_db_del(const struct GUID *client_guid,
@@ -36,15 +38,18 @@ NTSTATUS leases_db_del(const struct GUID *client_guid,
 		       const struct file_id *id);
 NTSTATUS leases_db_parse(const struct GUID *client_guid,
 			 const struct smb2_lease_key *lease_key,
-			 void (*parser)(uint32_t num_file_ids,
-					struct file_id *ids,
-					const char *filename,
-					const char *stream_name,
+			 void (*parser)(uint32_t num_files,
+					const struct leases_db_file *files,
 					void *private_data),
 			 void *private_data);
 NTSTATUS leases_db_rename(const struct GUID *client_guid,
 			const struct smb2_lease_key *lease_key,
 			const struct file_id *id,
+			const char *servicepath_new,
 			const char *filename_new,
 			const char *stream_name_new);
+NTSTATUS leases_db_copy_file_ids(TALLOC_CTX *mem_ctx,
+			uint32_t num_files,
+			const struct leases_db_file *files,
+			struct file_id **pp_ids);
 #endif /* _LEASES_DB_H_ */

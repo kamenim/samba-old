@@ -1957,10 +1957,6 @@ static WERROR libnet_join_pre_processing(TALLOC_CTX *mem_ctx,
 		return WERR_INVALID_PARAM;
 	}
 
-	if (IS_DC) {
-		return WERR_SETUP_DOMAIN_CONTROLLER;
-	}
-
 	if (!r->in.admin_domain) {
 		char *admin_domain = NULL;
 		char *admin_account = NULL;
@@ -2143,7 +2139,9 @@ static WERROR libnet_join_check_config(TALLOC_CTX *mem_ctx,
 
 	switch (r->out.domain_is_ad) {
 		case false:
-			valid_security = (lp_security() == SEC_DOMAIN);
+			valid_security = (lp_security() == SEC_DOMAIN)
+				|| (lp_server_role() == ROLE_DOMAIN_PDC)
+				|| (lp_server_role() == ROLE_DOMAIN_BDC);
 			if (valid_workgroup && valid_security) {
 				/* nothing to be done */
 				return WERR_OK;

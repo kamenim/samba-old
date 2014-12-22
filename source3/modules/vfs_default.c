@@ -1864,15 +1864,14 @@ static int strict_allocate_ftruncate(vfs_handle_struct *handle, files_struct *fs
 	   return ENOTSUP or EINVAL in cases like that. */
 	ret = SMB_VFS_FALLOCATE(fsp, VFS_FALLOCATE_EXTEND_SIZE,
 				pst->st_ex_size, space_to_write);
-	if (ret == ENOSPC) {
-		errno = ENOSPC;
+	if (ret == -1 && errno == ENOSPC) {
 		return -1;
 	}
 	if (ret == 0) {
 		return 0;
 	}
 	DEBUG(10,("strict_allocate_ftruncate: SMB_VFS_FALLOCATE failed with "
-		"error %d. Falling back to slow manual allocation\n", ret));
+		"error %d. Falling back to slow manual allocation\n", errno));
 
 	/* available disk space is enough or not? */
 	space_avail = get_dfree_info(fsp->conn,
@@ -1888,8 +1887,7 @@ static int strict_allocate_ftruncate(vfs_handle_struct *handle, files_struct *fs
 	/* Write out the real space on disk. */
 	ret = vfs_slow_fallocate(fsp, pst->st_ex_size, space_to_write);
 	if (ret != 0) {
-		errno = ret;
-		ret = -1;
+		return -1;
 	}
 
 	return 0;
@@ -1974,6 +1972,15 @@ static int vfswrap_fallocate(vfs_handle_struct *handle,
 	START_PROFILE(syscall_fallocate);
 	if (mode == VFS_FALLOCATE_EXTEND_SIZE) {
 		result = sys_posix_fallocate(fsp->fh->fd, offset, len);
+		/*
+		 * posix_fallocate returns 0 on success, errno on error
+		 * and doesn't set errno. Make it behave like fallocate()
+		 * which returns -1, and sets errno on failure.
+		 */
+		if (result != 0) {
+			errno = result;
+			result = -1;
+		}
 	} else if (mode == VFS_FALLOCATE_KEEP_SIZE) {
 		result = sys_fallocate(fsp->fh->fd, mode, offset, len);
 	} else {
@@ -2112,8 +2119,23 @@ static NTSTATUS vfswrap_notify_watch(vfs_handle_struct *vfs_handle,
 	 */
 #ifdef HAVE_INOTIFY
 	if (lp_kernel_change_notify(vfs_handle->conn->params)) {
-		return inotify_watch(ctx, path, filter, subdir_filter,
-				     callback, private_data, handle);
+		int ret;
+		if (!lp_parm_bool(-1, "notify", "inotify", True)) {
+			return NT_STATUS_INVALID_SYSTEM_SERVICE;
+		}
+		/*
+		 * "ctx->private_data" is not obvious as a talloc context
+		 * here. Without modifying the VFS we don't have a mem_ctx
+		 * available here, and ctx->private_data was used by
+		 * inotify_watch before it got a real talloc parent.
+		 */
+		ret = inotify_watch(ctx->private_data, ctx,
+				    path, filter, subdir_filter,
+				    callback, private_data, handle);
+		if (ret != 0) {
+			return map_nt_error_from_unix(ret);
+		}
+		return NT_STATUS_OK;
 	}
 #endif
 	/*

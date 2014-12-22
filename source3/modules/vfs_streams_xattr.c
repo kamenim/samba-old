@@ -879,6 +879,12 @@ static int streams_xattr_connect(vfs_handle_struct *handle,
 	struct streams_xattr_config *config;
 	const char *default_prefix = SAMBA_XATTR_DOSSTREAM_PREFIX;
 	const char *prefix;
+	int rc;
+
+	rc = SMB_VFS_NEXT_CONNECT(handle, service, user);
+	if (rc != 0) {
+		return rc;
+	}
 
 	config = talloc_zero(handle->conn, struct streams_xattr_config);
 	if (config == NULL) {
@@ -1103,11 +1109,12 @@ static int streams_xattr_fallocate(struct vfs_handle_struct *handle,
 	}
 
 	if (!streams_xattr_recheck(sio)) {
-		return errno;
+		return -1;
 	}
 
 	/* Let the pwrite code path handle it. */
-	return ENOSYS;
+	errno = ENOSYS;
+	return -1;
 }
 
 
