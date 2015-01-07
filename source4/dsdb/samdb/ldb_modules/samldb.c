@@ -1299,7 +1299,9 @@ static int samldb_prim_group_change(struct samldb_ctx *ac)
 	/* Fetch information from the existing object */
 
 	ret = dsdb_module_search_dn(ac->module, ac, &res, ac->msg->dn, attrs,
-				    DSDB_FLAG_NEXT_MODULE, ac->req);
+				    DSDB_FLAG_NEXT_MODULE |
+				    DSDB_SEARCH_SHOW_DELETED | DSDB_SEARCH_SHOW_RECYCLED,
+				    ac->req);
 	if (ret != LDB_SUCCESS) {
 		return ret;
 	}
@@ -1429,11 +1431,11 @@ static int samldb_prim_group_change(struct samldb_ctx *ac)
 	return LDB_SUCCESS;
 }
 
-static int samldb_prim_group_trigger(struct samldb_ctx *ac)
+static int samldb_prim_group_trigger(struct samldb_ctx *ac, bool bSet)
 {
 	int ret;
 
-	if (ac->req->operation == LDB_ADD) {
+	if (bSet) {
 		ret = samldb_prim_group_set(ac);
 	} else {
 		ret = samldb_prim_group_change(ac);
@@ -2376,7 +2378,7 @@ static int samldb_add(struct ldb_module *module, struct ldb_request *req)
 				 "objectclass", "user") != NULL) {
 		ac->type = SAMLDB_TYPE_USER;
 
-		ret = samldb_prim_group_trigger(ac);
+		ret = samldb_prim_group_trigger(ac, true);
 		if (ret != LDB_SUCCESS) {
 			return ret;
 		}
@@ -2436,6 +2438,97 @@ static int samldb_add(struct ldb_module *module, struct ldb_request *req)
 
 	/* nothing matched, go on */
 	return ldb_next_request(module, req);
+}
+
+static int samldb_ctx_orig_object(struct ldb_context *ldb, struct samldb_ctx *ac, struct ldb_message **msg_p)
+{
+	int ret;
+	struct ldb_result *ldb_res;
+
+	ret = dsdb_module_search_dn(ac->module, ac, &ldb_res, ac->msg->dn, NULL,
+								DSDB_FLAG_NEXT_MODULE |
+								DSDB_SEARCH_SHOW_DELETED | DSDB_SEARCH_SHOW_RECYCLED,
+								ac->req);
+	if (ret != LDB_SUCCESS || ldb_res->count != 1) {
+		return ldb_error(ldb, ret, "samldb: Failed to fetch current state for modified object");
+	}
+	*msg_p = ldb_res->msgs[0];
+
+	return LDB_SUCCESS;
+}
+
+static int samldb_fill_object_by_type(struct ldb_context *ldb, struct samldb_ctx *ac)
+{
+	int					ret;
+	struct ldb_message 	*orig_obj;
+
+	ret = samldb_ctx_orig_object(ldb, ac, &orig_obj);
+
+	if (samdb_find_attribute(ldb, orig_obj,
+				 "objectclass", "user") != NULL) {
+		ac->type = SAMLDB_TYPE_USER;
+
+		ret = samldb_prim_group_trigger(ac, true);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+
+		ret = samldb_objectclass_trigger(ac);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+
+		/* Don't call samldb_fill_object() - it generate ADD request */
+		return LDB_SUCCESS;
+	}
+
+	if (samdb_find_attribute(ldb, orig_obj,
+				 "objectclass", "group") != NULL) {
+		ac->type = SAMLDB_TYPE_GROUP;
+
+		ret = samldb_objectclass_trigger(ac);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+
+		/* Don't call samldb_fill_object() - it generate ADD request */
+		return LDB_SUCCESS;
+	}
+
+	/* perhaps a foreignSecurityPrincipal? */
+	if (samdb_find_attribute(ldb, orig_obj,
+				 "objectclass",
+				 "foreignSecurityPrincipal") != NULL) {
+		return samldb_fill_foreignSecurityPrincipal_object(ac);
+	}
+
+	if (samdb_find_attribute(ldb, orig_obj,
+				 "objectclass", "classSchema") != NULL) {
+		ret = samldb_schema_info_update(ac);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(ac);
+			return ret;
+		}
+
+		ac->type = SAMLDB_TYPE_CLASS;
+		/* Don't call samldb_fill_object() - it generate ADD request */
+		return LDB_SUCCESS;
+	}
+
+	if (samdb_find_attribute(ldb, orig_obj,
+				 "objectclass", "attributeSchema") != NULL) {
+		ret = samldb_schema_info_update(ac);
+		if (ret != LDB_SUCCESS) {
+			talloc_free(ac);
+			return ret;
+		}
+
+		ac->type = SAMLDB_TYPE_ATTRIBUTE;
+		/* Don't call samldb_fill_object() - it generate ADD request */
+		return LDB_SUCCESS;
+	}
+
+	return LDB_SUCCESS;
 }
 
 /* modify */
@@ -2522,15 +2615,15 @@ static int samldb_modify(struct ldb_module *module, struct ldb_request *req)
 		return ldb_operr(ldb);
 	}
 
-	if (is_undelete == NULL) {
+//	if (is_undelete == NULL) {
 		el = ldb_msg_find_element(ac->msg, "primaryGroupID");
 		if (el != NULL) {
-			ret = samldb_prim_group_trigger(ac);
+			ret = samldb_prim_group_trigger(ac, is_undelete != NULL);
 			if (ret != LDB_SUCCESS) {
 				return ret;
 			}
 		}
-	}
+//	}
 
 	el = ldb_msg_find_element(ac->msg, "userAccountControl");
 	if (el != NULL) {
@@ -2601,9 +2694,19 @@ static int samldb_modify(struct ldb_module *module, struct ldb_request *req)
 		}
 	}
 
+	if (is_undelete != NULL) {
+		DEBUG(0, ("samldb: Handle DSDB_CONTROL_RESTORE_TOMBSTONE_OID request\n"));
+		ret = samldb_fill_object_by_type(ldb, ac);
+		if (ret != LDB_SUCCESS) {
+			return ret;
+		}
+		modified = true;
+	}
+
 	if (modified) {
 		struct ldb_request *child_req;
 
+		DEBUG(0, ("samldb: Modifications done - build modify request\n"));
 		/* Now perform the real modifications as a child request */
 		ret = ldb_build_mod_req(&child_req, ldb, ac,
 					ac->msg,

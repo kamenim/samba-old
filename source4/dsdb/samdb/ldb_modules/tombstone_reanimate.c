@@ -233,6 +233,8 @@ static int _tr_restore_attributes(struct ldb_context *ldb, struct ldb_message *c
 		return LDB_ERR_OPERATIONS_ERROR;
 	}
 
+	return LDB_SUCCESS;
+
 	/* objectClass is USER */
 	if (samdb_find_attribute(ldb, cur_msg, "objectclass", "user") != NULL) {
 		/* restoring 'user' instance attribute is heavily borrowed from samldb.c */

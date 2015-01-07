@@ -169,6 +169,23 @@ class BaseRestoreObjectTestCase(RestoredObjectAttributesBaseTestCase):
         except LdbError, (num, _):
             self.assertEquals(num, ERR_ATTRIBUTE_OR_VALUE_EXISTS)
 
+    def _test_undelete_with_attributes(self):
+        print "Testing standard undelete operation"
+        usr1 = "cn=testuser,cn=users," + self.base_dn
+        samba.tests.delete_force(self.samdb, usr1)
+        self.samdb.add({
+            "dn": usr1,
+            "objectclass": "user",
+            "samaccountname": "user_pgid_513"})
+        objLive1 = self.search_dn(usr1)
+        guid1 = objLive1["objectGUID"][0]
+        self.samdb.delete(usr1)
+        objDeleted1 = self.search_guid(guid1)
+        self.restore_deleted_object(self.samdb, objDeleted1.dn, usr1, {"primaryGroupID": "514"})
+        objLive2 = self.search_dn(usr1)
+        self.assertEqual(str(objLive2.dn).lower(), str(objLive1.dn).lower())
+#         samba.tests.delete_force(self.samdb, usr1)
+
     def test_undelete(self):
         print "Testing standard undelete operation"
         usr1 = "cn=testuser,cn=users," + self.base_dn
@@ -177,7 +194,7 @@ class BaseRestoreObjectTestCase(RestoredObjectAttributesBaseTestCase):
             "dn": usr1,
             "objectclass": "user",
             "description": "test user description",
-            "samaccountname": "testuser"})
+            "samaccountname": "u_undelete"})
         objLive1 = self.search_dn(usr1)
         guid1 = objLive1["objectGUID"][0]
         self.samdb.delete(usr1)
@@ -185,7 +202,7 @@ class BaseRestoreObjectTestCase(RestoredObjectAttributesBaseTestCase):
         self.restore_deleted_object(self.samdb, objDeleted1.dn, usr1)
         objLive2 = self.search_dn(usr1)
         self.assertEqual(str(objLive2.dn).lower(), str(objLive1.dn).lower())
-        samba.tests.delete_force(self.samdb, usr1)
+#         samba.tests.delete_force(self.samdb, usr1)
 
     def test_rename(self):
         print "Testing attempt to rename deleted object"
@@ -251,6 +268,7 @@ class BaseRestoreObjectTestCase(RestoredObjectAttributesBaseTestCase):
     def test_undelete_existing(self):
         print "Testing undelete user after a user with the same dn has been created"
         usr1 = "cn=testuser,cn=users," + self.base_dn
+        samba.tests.delete_force(self.samdb, usr1)
         self.samdb.add({
             "dn": usr1,
             "objectclass": "user",
