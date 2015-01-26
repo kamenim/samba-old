@@ -186,14 +186,14 @@ def connect_samdb(samdb_url, lp=None, session_info=None, credentials=None,
     to make proper URL for ldb.connect() while using default
     parameters for connection based on test environment
     """
-    samdb_url = samdb_url.lower()
     if not "://" in samdb_url:
         if not ldap_only and os.path.isfile(samdb_url):
             samdb_url = "tdb://%s" % samdb_url
         else:
             samdb_url = "ldap://%s" % samdb_url
     # use 'paged_search' module when connecting remotely
-    if samdb_url.startswith("ldap://"):
+    if samdb_url.lower().startswith("ldap://"):
+        samdb_url = samdb_url.lower()
         ldb_options = ["modules:paged_searches"]
     elif ldap_only:
         raise AssertionError("Trying to connect to %s while remote "
