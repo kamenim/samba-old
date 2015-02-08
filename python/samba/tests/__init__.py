@@ -192,7 +192,8 @@ def connect_samdb(samdb_url, lp=None, session_info=None, credentials=None,
         else:
             samdb_url = "ldap://%s" % samdb_url
     # use 'paged_search' module when connecting remotely
-    if samdb_url.startswith("ldap://"):
+    if samdb_url.lower().startswith("ldap://"):
+        samdb_url = samdb_url.lower()
         ldb_options = ["modules:paged_searches"]
     elif ldap_only:
         raise AssertionError("Trying to connect to %s while remote "
