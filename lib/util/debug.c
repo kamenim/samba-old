@@ -215,10 +215,20 @@ void gfree_debugsyms(void)
 utility lists registered debug class names's
 ****************************************************************************/
 
-char *debug_list_class_names_and_levels(void)
+char *debug_list_class_names_and_levels(TALLOC_CTX *mem_ctx)
 {
-	char *buf = NULL;
+	char *buf;
 	unsigned int i;
+
+	/*
+	 * Initial allocation for 20 char so we skip reallocation at least
+	 * for first iteration. 20 > len("printdrivers" + ":" + "999" + "\n")
+	 */
+	buf = talloc_zero_array(mem_ctx, char, 20);
+	if (buf == NULL) {
+		return NULL;
+	}
+
 	/* prepare strings */
 	for (i = 0; i < debug_num_classes; i++) {
 		buf = talloc_asprintf_append(buf,
@@ -281,14 +291,14 @@ int debug_add_class(const char *classname)
 
 	default_level = DEBUGLEVEL_CLASS[DBGC_ALL];
 
-	new_class_list = talloc_realloc(NULL, new_class_list, int, ndx + 1);
+	new_class_list = talloc_realloc(talloc_autofree_context(), new_class_list, int, ndx + 1);
 	if (!new_class_list)
 		return -1;
 	DEBUGLEVEL_CLASS = new_class_list;
 
 	DEBUGLEVEL_CLASS[ndx] = default_level;
 
-	new_name_list = talloc_realloc(NULL, classname_table, char *, ndx + 1);
+	new_name_list = talloc_realloc(talloc_autofree_context(), classname_table, char *, ndx + 1);
 	if (!new_name_list)
 		return -1;
 	classname_table = new_name_list;
@@ -510,7 +520,7 @@ void debug_set_logfile(const char *name)
 		return;
 	}
 	TALLOC_FREE(state.debugf);
-	state.debugf = talloc_strdup(NULL, name);
+	state.debugf = talloc_strdup(talloc_autofree_context(), name);
 }
 
 static void debug_close_fd(int fd)

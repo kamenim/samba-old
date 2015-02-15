@@ -84,10 +84,19 @@ static void debuglevel_message(struct messaging_context *msg_ctx,
 			       struct server_id src,
 			       DATA_BLOB *data)
 {
-	char *message = debug_list_class_names_and_levels();
+	char *message;
+	TALLOC_CTX *temp_ctx;
 
+	temp_ctx = talloc_stackframe();
+	if (temp_ctx == NULL) {
+		DEBUG(0,("debuglevel_message - Unable to allocate local mem context. Possibly OOM!\n"));
+		return;
+	}
+
+	message = debug_list_class_names_and_levels(temp_ctx);
 	if (!message) {
 		DEBUG(0,("debuglevel_message - debug_list_class_names_and_levels returned NULL\n"));
+		TALLOC_FREE(temp_ctx);
 		return;
 	}
 
@@ -96,7 +105,7 @@ static void debuglevel_message(struct messaging_context *msg_ctx,
 	messaging_send_buf(msg_ctx, src, MSG_DEBUGLEVEL,
 			   (uint8 *)message, strlen(message) + 1);
 
-	TALLOC_FREE(message);
+	TALLOC_FREE(temp_ctx);
 }
 void debug_register_msgs(struct messaging_context *msg_ctx)
 {
