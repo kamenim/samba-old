@@ -290,3 +290,6 @@
 # This fails because it requires the tombstone_reanimation module to be enabled
 #
 ^samba4.ldap.acl.python\(.*\).__main__.AclUndeleteTests.test_undelete\(.*\)
+#
+# This fails because our python bindings create python Lists, not a type we can watch for set methods on.
+^samba.tests.dcerpc.integer.samba.tests.dcerpc.integer.IntegerTests.test_.*_into_uint8_list
