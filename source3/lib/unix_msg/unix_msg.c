@@ -23,7 +23,7 @@
 #include "system/network.h"
 #include "dlinklist.h"
 #include "pthreadpool/pthreadpool.h"
-#include "lib/iov_buf.h"
+#include "lib/util/iov_buf.h"
 #include "lib/msghdr.h"
 #include <fcntl.h>
 
@@ -627,7 +627,7 @@ static int unix_dgram_send(struct unix_dgram_ctx *ctx,
 
 	{
 		uint8_t buf[fdlen];
-		msghdr_prep_fds(&msg, buf, 0, fds, num_fds);
+		msghdr_prep_fds(&msg, buf, fdlen, fds, num_fds);
 
 		ret = sendmsg(ctx->sock, &msg, 0);
 	}
@@ -684,13 +684,13 @@ static int unix_dgram_free(struct unix_dgram_ctx *ctx)
 
 	ctx->ev_funcs->watch_free(ctx->sock_read_watch);
 
+	close(ctx->sock);
 	if (getpid() == ctx->created_pid) {
 		/* If we created it, unlink. Otherwise someone else might
 		 * still have it open */
 		unlink(ctx->path);
 	}
 
-	close(ctx->sock);
 	free(ctx->recv_buf);
 	free(ctx);
 	return 0;
@@ -744,7 +744,7 @@ static void unix_msg_recv(struct unix_dgram_ctx *dgram_ctx,
 
 int unix_msg_init(const struct sockaddr_un *addr,
 		  const struct poll_funcs *ev_funcs,
-		  size_t fragment_len, uint64_t cookie,
+		  size_t fragment_len,
 		  void (*recv_callback)(struct unix_msg_ctx *ctx,
 					uint8_t *msg, size_t msg_len,
 					int *fds, size_t num_fds,
@@ -762,7 +762,7 @@ int unix_msg_init(const struct sockaddr_un *addr,
 
 	*ctx = (struct unix_msg_ctx) {
 		.fragment_len = fragment_len,
-		.cookie = cookie,
+		.cookie = 1,
 		.recv_callback = recv_callback,
 		.private_data = private_data
 	};

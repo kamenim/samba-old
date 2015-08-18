@@ -69,6 +69,8 @@
 	torture_dsdb_syntax,
 	torture_registry,
 	torture_local_verif_trailer,
+	torture_local_nss,
+	torture_local_fsrvp,
 	NULL
 };
 

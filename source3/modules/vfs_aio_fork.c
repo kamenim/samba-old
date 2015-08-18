@@ -51,7 +51,7 @@ struct mmap_area {
 
 static int mmap_area_destructor(struct mmap_area *area)
 {
-	munmap((void *)area->ptr, area->size);
+	munmap(discard_const(area->ptr), area->size);
 	return 0;
 }
 
@@ -154,21 +154,16 @@ static void free_aio_children(void **p)
 
 static ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd)
 {
-	struct msghdr msg;
 	struct iovec iov[1];
+	struct msghdr msg = { .msg_iov = iov, .msg_iovlen = 1 };
 	ssize_t n;
 	size_t bufsize = msghdr_prep_recv_fds(NULL, NULL, 0, 1);
 	uint8_t buf[bufsize];
 
 	msghdr_prep_recv_fds(&msg, buf, bufsize, 1);
 
-	msg.msg_name = NULL;
-	msg.msg_namelen = 0;
-
 	iov[0].iov_base = (void *)ptr;
 	iov[0].iov_len = nbytes;
-	msg.msg_iov = iov;
-	msg.msg_iovlen = 1;
 
 	do {
 		n = recvmsg(fd, &msg, 0);
@@ -203,15 +198,13 @@ static ssize_t read_fd(int fd, void *ptr, size_t nbytes, int *recvfd)
 
 static ssize_t write_fd(int fd, void *ptr, size_t nbytes, int sendfd)
 {
-	struct msghdr msg;
+	struct msghdr msg = {0};
 	size_t bufsize = msghdr_prep_fds(NULL, NULL, 0, &sendfd, 1);
 	uint8_t buf[bufsize];
 	struct iovec iov;
 	ssize_t sent;
 
 	msghdr_prep_fds(&msg, buf, bufsize, &sendfd, 1);
-	msg.msg_name = NULL;
-	msg.msg_namelen = 0;
 
 	iov.iov_base = (void *)ptr;
 	iov.iov_len = nbytes;
@@ -351,7 +344,7 @@ static void aio_child_loop(int sockfd, struct mmap_area *map)
 		switch (cmd_struct.cmd) {
 		case READ_CMD:
 			ret_struct.size = sys_pread(
-				fd, (void *)map->ptr, cmd_struct.n,
+				fd, discard_const(map->ptr), cmd_struct.n,
 				cmd_struct.offset);
 #if 0
 /* This breaks "make test" when run with aio_fork module. */
@@ -362,7 +355,7 @@ static void aio_child_loop(int sockfd, struct mmap_area *map)
 			break;
 		case WRITE_CMD:
 			ret_struct.size = sys_pwrite(
-				fd, (void *)map->ptr, cmd_struct.n,
+				fd, discard_const(map->ptr), cmd_struct.n,
 				cmd_struct.offset);
 			break;
 		case FSYNC_CMD:
@@ -405,7 +398,7 @@ static int aio_child_destructor(struct aio_child *child)
 	SMB_ASSERT(!child->busy);
 
 	DEBUG(10, ("aio_child_destructor: removing child %d on fd %d\n",
-			child->pid, child->sockfd));
+		   (int)child->pid, child->sockfd));
 
 	/*
 	 * closing the sockfd makes the child not return from recvmsg() on RHEL
@@ -478,7 +471,7 @@ static int create_aio_child(struct smbd_server_connection *sconn,
 	}
 
 	DEBUG(10, ("Child %d created with sockfd %d\n",
-			result->pid, fdpair[0]));
+		   (int)result->pid, fdpair[0]));
 
 	result->sockfd = fdpair[0];
 	close(fdpair[1]);

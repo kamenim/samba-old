@@ -9,8 +9,6 @@ import os
 sys.path.insert(0, "bin/python")
 import samba
 from samba.tests.subunitrun import SubunitOptions, TestProgram
-samba.ensure_external_module("testtools", "testtools")
-samba.ensure_external_module("subunit", "subunit/python")
 
 import samba.getopt as options
 
@@ -2908,7 +2906,7 @@ class SamTests(samba.tests.TestCase):
         actual_names = set(user_obj.keys())
         # Samba does not use 'dSCorePropagationData', so skip it
         actual_names -= set(['dSCorePropagationData'])
-        self.assertEqual(set(expected_attrs.keys()), actual_names, "Actual object does not has expected attributes")
+        self.assertEqual(set(expected_attrs.keys()), actual_names, "Actual object does not have expected attributes")
         # check attribute values
         for name in expected_attrs.keys():
             actual_val = user_obj.get(name)

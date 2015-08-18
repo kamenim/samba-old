@@ -16,7 +16,7 @@ sys.path.insert(0, srcdir + '/buildtools/wafsamba')
 import wafsamba, samba_dist
 import Options
 
-samba_dist.DIST_DIRS('lib/replace buildtools:buildtools')
+samba_dist.DIST_DIRS('lib/replace buildtools:buildtools third_party/waf:third_party/waf')
 
 def set_options(opt):
     opt.BUILTIN_DEFAULT('NONE')
@@ -38,6 +38,7 @@ def configure(conf):
     conf.CHECK_HEADERS('libaio.h locale.h ndir.h pwd.h')
     conf.CHECK_HEADERS('shadow.h sys/acl.h')
     conf.CHECK_HEADERS('sys/attributes.h attr/attributes.h sys/capability.h sys/dir.h sys/epoll.h')
+    conf.CHECK_HEADERS('port.h')
     conf.CHECK_HEADERS('sys/fcntl.h sys/filio.h sys/filsys.h sys/fs/s5param.h sys/fs/vx/quota.h')
     conf.CHECK_HEADERS('sys/id.h sys/ioctl.h sys/ipc.h sys/mman.h sys/mode.h sys/ndir.h sys/priv.h')
     conf.CHECK_HEADERS('sys/resource.h sys/security.h sys/shm.h sys/statfs.h sys/statvfs.h sys/termio.h')
@@ -52,7 +53,7 @@ def configure(conf):
     conf.CHECK_HEADERS('sys/uio.h ifaddrs.h direct.h dirent.h')
     conf.CHECK_HEADERS('windows.h winsock2.h ws2tcpip.h')
     conf.CHECK_HEADERS('errno.h')
-    conf.CHECK_HEADERS('gcrypt.h getopt.h iconv.h')
+    conf.CHECK_HEADERS('getopt.h iconv.h')
     conf.CHECK_HEADERS('memory.h nss.h sasl/sasl.h')
 
     conf.CHECK_FUNCS_IN('inotify_init', 'inotify', checklibc=True,
@@ -73,6 +74,7 @@ def configure(conf):
     conf.CHECK_HEADERS('utmp.h utmpx.h lastlog.h malloc.h')
     conf.CHECK_HEADERS('syscall.h sys/syscall.h inttypes.h')
     conf.CHECK_HEADERS('sys/atomic.h')
+    conf.CHECK_HEADERS('libgen.h')
 
     # Check for process set name support
     conf.CHECK_CODE('''
@@ -134,6 +136,7 @@ def configure(conf):
     conf.CHECK_TYPE_IN('sa_family_t', 'sys/socket.h')
 
     conf.CHECK_TYPE_IN('sig_atomic_t', 'signal.h', define='HAVE_SIG_ATOMIC_T_TYPE')
+    conf.CHECK_FUNCS('sigsetmask siggetmask sigprocmask sigblock sigaction sigset')
 
     conf.CHECK_FUNCS_IN('''inet_ntoa inet_aton inet_ntop inet_pton connect gethostbyname
                            getaddrinfo getnameinfo freeaddrinfo gai_strerror socketpair''',
@@ -237,12 +240,12 @@ def configure(conf):
     conf.CHECK_FUNCS('lstat getpgrp utime utimes setuid seteuid setreuid setresuid setgid setegid')
     conf.CHECK_FUNCS('setregid setresgid chroot strerror vsyslog setlinebuf mktime')
     conf.CHECK_FUNCS('ftruncate chsize rename waitpid wait4')
-    conf.CHECK_FUNCS('initgroups pread pwrite strndup strcasestr')
+    conf.CHECK_FUNCS('initgroups pread pwrite strndup strcasestr strsep')
     conf.CHECK_FUNCS('strtok_r mkdtemp dup2 dprintf vdprintf isatty chown lchown')
     conf.CHECK_FUNCS('link readlink symlink realpath snprintf vsnprintf')
     conf.CHECK_FUNCS('asprintf vasprintf setenv unsetenv strnlen strtoull __strtoull')
     conf.CHECK_FUNCS('strtouq strtoll __strtoll strtoq memalign posix_memalign')
-    conf.CHECK_FUNCS('prctl')
+    conf.CHECK_FUNCS('prctl dirname basename')
 
     # libbsd on some platforms provides strlcpy and strlcat
     if not conf.CHECK_FUNCS('strlcpy strlcat'):
@@ -283,6 +286,7 @@ def configure(conf):
     conf.CHECK_FUNCS('timegm getifaddrs freeifaddrs mmap setgroups syscall setsid')
     conf.CHECK_FUNCS('getgrent_r getgrgid_r getgrnam_r getgrouplist getpagesize')
     conf.CHECK_FUNCS('getpwent_r getpwnam_r getpwuid_r epoll_create')
+    conf.CHECK_FUNCS('port_create')
 
     conf.SET_TARGET_TYPE('attr', 'EMPTY')
 
@@ -444,21 +448,15 @@ removeea setea
 
     if conf.CONFIG_SET('HAVE_PTHREAD'):
 
-        conf.CHECK_DECLS('pthread_mutexattr_setrobust', headers='pthread.h')
-        if not conf.CONFIG_SET('HAVE_DECL_PTHREAD_MUTEXATTR_SETROBUST'):
-            conf.CHECK_DECLS('pthread_mutexattr_setrobust_np',
-                             headers='pthread.h')
-
         conf.CHECK_FUNCS_IN('pthread_mutexattr_setrobust', 'pthread',
                             checklibc=True, headers='pthread.h')
         if not conf.CONFIG_SET('HAVE_PTHREAD_MUTEXATTR_SETROBUST'):
             conf.CHECK_FUNCS_IN('pthread_mutexattr_setrobust_np', 'pthread',
                                 checklibc=True, headers='pthread.h')
 
-        conf.CHECK_DECLS('pthread_mutex_consistent', headers='pthread.h')
-        if not conf.CONFIG_SET('HAVE_DECL_PTHREAD_MUTEX_CONSISTENT'):
-            conf.CHECK_DECLS('pthread_mutex_consistent_np',
-                             headers='pthread.h')
+        conf.CHECK_DECLS('PTHREAD_MUTEX_ROBUST', headers='pthread.h')
+        if not conf.CONFIG_SET('HAVE_DECL_PTHREAD_MUTEX_ROBUST'):
+            conf.CHECK_DECLS('PTHREAD_MUTEX_ROBUST_NP', headers='pthread.h')
 
         conf.CHECK_FUNCS_IN('pthread_mutex_consistent', 'pthread',
                             checklibc=True, headers='pthread.h')
@@ -468,6 +466,8 @@ removeea setea
 
         if ((conf.CONFIG_SET('HAVE_PTHREAD_MUTEXATTR_SETROBUST') or
              conf.CONFIG_SET('HAVE_PTHREAD_MUTEXATTR_SETROBUST_NP')) and
+            (conf.CONFIG_SET('HAVE_DECL_PTHREAD_MUTEX_ROBUST') or
+             conf.CONFIG_SET('HAVE_DECL_PTHREAD_MUTEX_ROBUST_NP')) and
             (conf.CONFIG_SET('HAVE_PTHREAD_MUTEX_CONSISTENT') or
              conf.CONFIG_SET('HAVE_PTHREAD_MUTEX_CONSISTENT_NP'))):
             conf.DEFINE('HAVE_ROBUST_MUTEXES', 1)
@@ -486,6 +486,9 @@ removeea setea
 
     if conf.CONFIG_SET('HAVE_EPOLL_CREATE') and conf.CONFIG_SET('HAVE_SYS_EPOLL_H'):
         conf.DEFINE('HAVE_EPOLL', 1)
+
+    if conf.CONFIG_SET('HAVE_PORT_CREATE') and conf.CONFIG_SET('HAVE_PORT_H'):
+        conf.DEFINE('HAVE_SOLARIS_PORTS', 1)
 
     conf.CHECK_HEADERS('poll.h')
     conf.CHECK_FUNCS('poll')
@@ -627,7 +630,7 @@ REPLACEMENT_FUNCTIONS = {
                   'memmove', 'strdup', 'setlinebuf', 'vsyslog', 'strnlen',
                   'strndup', 'waitpid', 'seteuid', 'setegid', 'chroot',
                   'mkstemp', 'mkdtemp', 'pread', 'pwrite', 'strcasestr',
-                  'strtok_r', 'strtoll', 'strtoull', 'setenv', 'unsetenv',
+                  'strsep', 'strtok_r', 'strtoll', 'strtoull', 'setenv', 'unsetenv',
                   'utime', 'utimes', 'dup2', 'chown', 'link', 'readlink',
                   'symlink', 'lchown', 'realpath', 'memmem', 'vdprintf',
                   'dprintf', 'get_current_dir_name',

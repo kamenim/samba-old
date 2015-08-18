@@ -177,6 +177,7 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 {
 	ADS_STRUCT *ads;
 	char addr[INET6_ADDRSTRLEN];
+	time_t pass_time;
 
 	if (c->display_usage) {
 		d_printf("%s\n"
@@ -206,6 +207,8 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 		d_fprintf( stderr, _("Failed to get server's current time!\n"));
 	}
 
+	pass_time = secrets_fetch_pass_last_set_time(ads->server.workgroup);
+
 	print_sockaddr(addr, sizeof(addr), &ads->ldap.ss);
 
 	d_printf(_("LDAP server: %s\n"), addr);
@@ -219,6 +222,9 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 	d_printf(_("KDC server: %s\n"), ads->auth.kdc_server );
 	d_printf(_("Server time offset: %d\n"), ads->auth.time_offset );
 
+	d_printf(_("Last machine account password change: %s\n"),
+		 http_timestring(talloc_tos(), pass_time));
+
 	ads_destroy(&ads);
 	return 0;
 }
@@ -230,7 +236,7 @@ static void use_in_memory_ccache(void) {
 }
 
 static ADS_STATUS ads_startup_int(struct net_context *c, bool only_own_domain,
-				  uint32 auth_flags, ADS_STRUCT **ads_ret)
+				  uint32_t auth_flags, ADS_STRUCT **ads_ret)
 {
 	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
@@ -1439,6 +1445,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	const char *os_version = NULL;
 	const char *os_servicepack = NULL;
 	bool modify_config = lp_config_backend_is_registry();
+	enum libnetjoin_JoinDomNameType domain_name_type = JoinDomNameTypeDNS;
 
 	if (c->display_usage)
 		return net_ads_join_usage(c, argc, argv);
@@ -1511,6 +1518,11 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 		}
 		else {
 			domain = argv[i];
+			if (strchr(domain, '.') == NULL) {
+				domain_name_type = JoinDomNameTypeUnknown;
+			} else {
+				domain_name_type = JoinDomNameTypeDNS;
+			}
 		}
 	}
 
@@ -1530,6 +1542,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	/* Do the domain join here */
 
 	r->in.domain_name	= domain;
+	r->in.domain_name_type	= domain_name_type;
 	r->in.create_upn	= createupn;
 	r->in.upn		= machineupn;
 	r->in.account_ou	= create_in_ou;
@@ -1552,6 +1565,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	if (W_ERROR_EQUAL(werr, WERR_DCNOTFOUND) &&
 	    strequal(domain, lp_realm())) {
 		r->in.domain_name = lp_workgroup();
+		r->in.domain_name_type = JoinDomNameTypeNBT;
 		werr = libnet_Join(ctx, r);
 	}
 	if (!W_ERROR_IS_OK(werr)) {
