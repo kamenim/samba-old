@@ -83,12 +83,11 @@ int dbwrap_wipe(struct db_context *db);
 int dbwrap_check(struct db_context *db);
 int dbwrap_get_seqnum(struct db_context *db);
 /* Returns 0 if unknown. */
-int dbwrap_hash_size(struct db_context *db);
 int dbwrap_transaction_start(struct db_context *db);
 NTSTATUS dbwrap_transaction_start_nonblock(struct db_context *db);
 int dbwrap_transaction_commit(struct db_context *db);
 int dbwrap_transaction_cancel(struct db_context *db);
-void dbwrap_db_id(struct db_context *db, const uint8_t **id, size_t *idlen);
+size_t dbwrap_db_id(struct db_context *db, uint8_t *id, size_t idlen);
 bool dbwrap_is_persistent(struct db_context *db);
 const char *dbwrap_name(struct db_context *db);
 
@@ -165,11 +164,7 @@ NTSTATUS dbwrap_unmarshall(struct db_context *db, const uint8_t *buf,
 
 
 /**
- * This opens an ntdb or tdb file: you can hand it a .ntdb or .tdb extension
- * and it will decide (based on parameter settings, or else what exists) which
- * to use.
- *
- * For backwards compatibility, it takes tdb-style open flags, not ntdb!
+ * This opens a tdb file
  */
 struct db_context *dbwrap_local_open(TALLOC_CTX *mem_ctx,
 				     struct loadparm_context *lp_ctx,

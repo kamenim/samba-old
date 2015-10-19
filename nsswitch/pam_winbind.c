@@ -2436,6 +2436,7 @@ static char* winbind_upn_to_username(struct pwb_context *ctx,
 	char *domain = NULL;
 	char *name;
 	char *p;
+	char *result;
 
 	/* This cannot work when the winbind separator = @ */
 
@@ -2467,7 +2468,10 @@ static char* winbind_upn_to_username(struct pwb_context *ctx,
 		return NULL;
 	}
 
-	return talloc_asprintf(ctx, "%s%c%s", domain, sep, name);
+	result = talloc_asprintf(ctx, "%s%c%s", domain, sep, name);
+	wbcFreeMemory(domain);
+	wbcFreeMemory(name);
+	return result;
 }
 
 static int _pam_delete_cred(pam_handle_t *pamh, int flags,
@@ -2485,7 +2489,7 @@ static int _pam_delete_cred(pam_handle_t *pamh, int flags,
 
 	retval = _pam_winbind_init_context(pamh, flags, argc, argv, type, &ctx);
 	if (retval) {
-		goto out;
+		return retval;
 	}
 
 	_PAM_LOG_FUNCTION_ENTER("_pam_delete_cred", ctx);
@@ -2621,7 +2625,7 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags,
 	retval = _pam_winbind_init_context(pamh, flags, argc, argv,
 					   PAM_WINBIND_AUTHENTICATE, &ctx);
 	if (retval) {
-		goto out;
+		return retval;
 	}
 
 	_PAM_LOG_FUNCTION_ENTER("pam_sm_authenticate", ctx);
@@ -2773,7 +2777,7 @@ int pam_sm_setcred(pam_handle_t *pamh, int flags,
 	ret = _pam_winbind_init_context(pamh, flags, argc, argv,
 					PAM_WINBIND_SETCRED, &ctx);
 	if (ret) {
-		goto out;
+		return ret;
 	}
 
 	_PAM_LOG_FUNCTION_ENTER("pam_sm_setcred", ctx);
@@ -2804,8 +2808,6 @@ int pam_sm_setcred(pam_handle_t *pamh, int flags,
 			break;
 	}
 
- out:
-
 	_PAM_LOG_FUNCTION_LEAVE("pam_sm_setcred", ctx, ret);
 
 	TALLOC_FREE(ctx);
@@ -2829,7 +2831,7 @@ int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
 	ret = _pam_winbind_init_context(pamh, flags, argc, argv,
 					PAM_WINBIND_ACCT_MGMT, &ctx);
 	if (ret) {
-		goto out;
+		return ret;
 	}
 
 	_PAM_LOG_FUNCTION_ENTER("pam_sm_acct_mgmt", ctx);
@@ -2925,7 +2927,7 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags,
 	ret = _pam_winbind_init_context(pamh, flags, argc, argv,
 					PAM_WINBIND_OPEN_SESSION, &ctx);
 	if (ret) {
-		goto out;
+		return ret;
 	}
 
 	_PAM_LOG_FUNCTION_ENTER("pam_sm_open_session", ctx);
@@ -2934,7 +2936,7 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags,
 		/* check and create homedir */
 		ret = _pam_mkhomedir(ctx);
 	}
- out:
+
 	_PAM_LOG_FUNCTION_LEAVE("pam_sm_open_session", ctx, ret);
 
 	TALLOC_FREE(ctx);
@@ -2952,12 +2954,11 @@ int pam_sm_close_session(pam_handle_t *pamh, int flags,
 	ret = _pam_winbind_init_context(pamh, flags, argc, argv,
 					PAM_WINBIND_CLOSE_SESSION, &ctx);
 	if (ret) {
-		goto out;
+		return ret;
 	}
 
 	_PAM_LOG_FUNCTION_ENTER("pam_sm_close_session", ctx);
 
-out:
 	_PAM_LOG_FUNCTION_LEAVE("pam_sm_close_session", ctx, ret);
 
 	TALLOC_FREE(ctx);
@@ -3039,7 +3040,7 @@ int pam_sm_chauthtok(pam_handle_t * pamh, int flags,
 	ret = _pam_winbind_init_context(pamh, flags, argc, argv,
 					PAM_WINBIND_CHAUTHTOK, &ctx);
 	if (ret) {
-		goto out;
+		return ret;
 	}
 
 	_PAM_LOG_FUNCTION_ENTER("pam_sm_chauthtok", ctx);

@@ -177,6 +177,7 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 {
 	ADS_STRUCT *ads;
 	char addr[INET6_ADDRSTRLEN];
+	time_t pass_time;
 
 	if (c->display_usage) {
 		d_printf("%s\n"
@@ -206,6 +207,8 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 		d_fprintf( stderr, _("Failed to get server's current time!\n"));
 	}
 
+	pass_time = secrets_fetch_pass_last_set_time(ads->server.workgroup);
+
 	print_sockaddr(addr, sizeof(addr), &ads->ldap.ss);
 
 	d_printf(_("LDAP server: %s\n"), addr);
@@ -219,6 +222,9 @@ static int net_ads_info(struct net_context *c, int argc, const char **argv)
 	d_printf(_("KDC server: %s\n"), ads->auth.kdc_server );
 	d_printf(_("Server time offset: %d\n"), ads->auth.time_offset );
 
+	d_printf(_("Last machine account password change: %s\n"),
+		 http_timestring(talloc_tos(), pass_time));
+
 	ads_destroy(&ads);
 	return 0;
 }
@@ -230,7 +236,7 @@ static void use_in_memory_ccache(void) {
 }
 
 static ADS_STATUS ads_startup_int(struct net_context *c, bool only_own_domain,
-				  uint32 auth_flags, ADS_STRUCT **ads_ret)
+				  uint32_t auth_flags, ADS_STRUCT **ads_ret)
 {
 	ADS_STRUCT *ads = NULL;
 	ADS_STATUS status;
@@ -1312,26 +1318,29 @@ static NTSTATUS net_update_dns(struct net_context *c, TALLOC_CTX *mem_ctx, ADS_S
 
 static int net_ads_join_usage(struct net_context *c, int argc, const char **argv)
 {
-	d_printf(_("net ads join [options]\n"
+	d_printf(_("net ads join [--no-dns-updates] [options]\n"
 	           "Valid options:\n"));
-	d_printf(_("   createupn[=UPN]    Set the userPrincipalName attribute during the join.\n"
-		   "                      The deault UPN is in the form host/netbiosname@REALM.\n"));
-	d_printf(_("   createcomputer=OU  Precreate the computer account in a specific OU.\n"
-		   "                      The OU string read from top to bottom without RDNs and delimited by a '/'.\n"
-		   "                      E.g. \"createcomputer=Computers/Servers/Unix\"\n"
-		   "                      NB: A backslash '\\' is used as escape at multiple levels and may\n"
-		   "                          need to be doubled or even quadrupled.  It is not used as a separator.\n"));
-	d_printf(_("   machinepass=PASS   Set the machine password to a specific value during the join.\n"
-		   "                      The deault password is random.\n"));
-	d_printf(_("   osName=string      Set the operatingSystem attribute during the join.\n"));
-	d_printf(_("   osVer=string       Set the operatingSystemVersion attribute during the join.\n"
-		   "                      NB: osName and osVer must be specified together for either to take effect.\n"
-		   "                          Also, the operatingSystemService attribute is also set when along with\n"
-		   "                          the two other attributes.\n"));
-
-	d_printf(_("   osServicePack=string Set the operatingSystemServicePack "
-		   "attribute during the join. Note: if not specified then by "
-		   "default the samba version string is used instead.\n"));
+	d_printf(_("   createupn[=UPN]       Set the userPrincipalName attribute during the join.\n"
+		   "                         The default UPN is in the form host/netbiosname@REALM.\n"));
+	d_printf(_("   createcomputer=OU     Precreate the computer account in a specific OU.\n"
+		   "                         The OU string read from top to bottom without RDNs\n"
+		   "                         and delimited by a '/'.\n"
+		   "                         E.g. \"createcomputer=Computers/Servers/Unix\"\n"
+		   "                         NB: A backslash '\\' is used as escape at multiple\n"
+		   "                             levels and may need to be doubled or even\n"
+		   "                             quadrupled. It is not used as a separator.\n"));
+	d_printf(_("   machinepass=PASS      Set the machine password to a specific value during\n"
+		   "                         the join. The default password is random.\n"));
+	d_printf(_("   osName=string         Set the operatingSystem attribute during the join.\n"));
+	d_printf(_("   osVer=string          Set the operatingSystemVersion attribute during join.\n"
+		   "                         NB: osName and osVer must be specified together for\n"
+		   "                             either to take effect. The operatingSystemService\n"
+		   "                             attribute is then also set along with the two\n"
+		   "                             other attributes.\n"));
+	d_printf(_("   osServicePack=string  Set the operatingSystemServicePack attribute\n"
+		   "                         during the join.\n"
+		   "                         NB: If not specified then by default the samba\n"
+		   "                             version string is used instead.\n"));
 	return -1;
 }
 
@@ -1439,6 +1448,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	const char *os_version = NULL;
 	const char *os_servicepack = NULL;
 	bool modify_config = lp_config_backend_is_registry();
+	enum libnetjoin_JoinDomNameType domain_name_type = JoinDomNameTypeDNS;
 
 	if (c->display_usage)
 		return net_ads_join_usage(c, argc, argv);
@@ -1511,6 +1521,11 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 		}
 		else {
 			domain = argv[i];
+			if (strchr(domain, '.') == NULL) {
+				domain_name_type = JoinDomNameTypeUnknown;
+			} else {
+				domain_name_type = JoinDomNameTypeDNS;
+			}
 		}
 	}
 
@@ -1530,6 +1545,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	/* Do the domain join here */
 
 	r->in.domain_name	= domain;
+	r->in.domain_name_type	= domain_name_type;
 	r->in.create_upn	= createupn;
 	r->in.upn		= machineupn;
 	r->in.account_ou	= create_in_ou;
@@ -1552,6 +1568,7 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	if (W_ERROR_EQUAL(werr, WERR_DCNOTFOUND) &&
 	    strequal(domain, lp_realm())) {
 		r->in.domain_name = lp_workgroup();
+		r->in.domain_name_type = JoinDomNameTypeNBT;
 		werr = libnet_Join(ctx, r);
 	}
 	if (!W_ERROR_IS_OK(werr)) {
@@ -1580,11 +1597,14 @@ int net_ads_join(struct net_context *c, int argc, const char **argv)
 	}
 
 	/*
-	 * We try doing the dns update (if it was compiled in).
+	 * We try doing the dns update (if it was compiled in
+	 * and if it was not disabled on the command line).
 	 * If the dns update fails, we still consider the join
 	 * operation as succeeded if we came this far.
 	 */
-	_net_ads_join_dns_updates(c, ctx, r);
+	if (!c->opt_no_dns_updates) {
+		_net_ads_join_dns_updates(c, ctx, r);
+	}
 
 	TALLOC_FREE(r);
 	TALLOC_FREE( ctx );

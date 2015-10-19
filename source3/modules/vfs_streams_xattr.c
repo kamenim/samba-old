@@ -106,47 +106,60 @@ static NTSTATUS streams_xattr_get_name(vfs_handle_struct *handle,
 				       const char *stream_name,
 				       char **xattr_name)
 {
+	char *sname;
 	char *stype;
 	struct streams_xattr_config *config;
 
 	SMB_VFS_HANDLE_GET_DATA(handle, config, struct streams_xattr_config,
 				return NT_STATUS_UNSUCCESSFUL);
 
-	stype = strchr_m(stream_name + 1, ':');
-
-	if (stype) {
-		if (strcasecmp_m(stype, ":$DATA") != 0) {
-			return NT_STATUS_INVALID_PARAMETER;
-		}
-	}
-
-	*xattr_name = talloc_asprintf(ctx, "%s%s",
-				      config->prefix,
-				      stream_name + 1);
-	if (*xattr_name == NULL) {
+	sname = talloc_strdup(ctx, stream_name + 1);
+	if (sname == NULL) {
 		return NT_STATUS_NO_MEMORY;
 	}
 
-	if (stype != NULL) {
-		/* Normalize the stream type to upercase. */
-		if (!strupper_m(strrchr_m(*xattr_name, ':') + 1)) {
+	/*
+	 * With vfs_fruit option "fruit:encoding = native" we're
+	 * already converting stream names that contain illegal NTFS
+	 * characters from their on-the-wire Unicode Private Range
+	 * encoding to their native ASCII representation.
+	 *
+	 * As as result the name of xattrs storing the streams (via
+	 * vfs_streams_xattr) may contain a colon, so we have to use
+	 * strrchr_m() instead of strchr_m() for matching the stream
+	 * type suffix.
+	 *
+	 * In check_path_syntax() we've already ensured the streamname
+	 * we got from the client is valid.
+	 */
+	stype = strrchr_m(sname, ':');
+
+	if (stype) {
+		/*
+		 * We only support one stream type: "$DATA"
+		 */
+		if (strcasecmp_m(stype, ":$DATA") != 0) {
+			talloc_free(sname);
 			return NT_STATUS_INVALID_PARAMETER;
 		}
-	} else if (config->store_stream_type) {
-		/*
-		 * Append an explicit stream type if one wasn't
-		 * specified.
-		 */
-		*xattr_name = talloc_asprintf(ctx, "%s%s",
-					      *xattr_name, ":$DATA");
-		if (*xattr_name == NULL) {
-			return NT_STATUS_NO_MEMORY;
-		}
+
+		/* Split name and type */
+		stype[0] = '\0';
+	}
+
+	*xattr_name = talloc_asprintf(ctx, "%s%s%s",
+				      config->prefix,
+				      sname,
+				      config->store_stream_type ? ":$DATA" : "");
+	if (*xattr_name == NULL) {
+		talloc_free(sname);
+		return NT_STATUS_NO_MEMORY;
 	}
 
 	DEBUG(10, ("xattr_name: %s, stream_name: %s\n", *xattr_name,
 		   stream_name));
 
+	talloc_free(sname);
 	return NT_STATUS_OK;
 }
 
@@ -944,9 +957,9 @@ static ssize_t streams_xattr_pwrite(vfs_handle_struct *handle,
 	}
 
         if ((offset + n) > ea.value.length-1) {
-		uint8 *tmp;
+		uint8_t *tmp;
 
-		tmp = talloc_realloc(talloc_tos(), ea.value.data, uint8,
+		tmp = talloc_realloc(talloc_tos(), ea.value.data, uint8_t,
 					   offset + n + 1);
 
 		if (tmp == NULL) {
@@ -1029,7 +1042,7 @@ static int streams_xattr_ftruncate(struct vfs_handle_struct *handle,
 					off_t offset)
 {
 	int ret;
-	uint8 *tmp;
+	uint8_t *tmp;
 	struct ea_struct ea;
 	NTSTATUS status;
         struct stream_io *sio =
@@ -1052,7 +1065,7 @@ static int streams_xattr_ftruncate(struct vfs_handle_struct *handle,
 		return -1;
 	}
 
-	tmp = talloc_realloc(talloc_tos(), ea.value.data, uint8,
+	tmp = talloc_realloc(talloc_tos(), ea.value.data, uint8_t,
 				   offset + 1);
 
 	if (tmp == NULL) {
@@ -1093,7 +1106,7 @@ static int streams_xattr_ftruncate(struct vfs_handle_struct *handle,
 
 static int streams_xattr_fallocate(struct vfs_handle_struct *handle,
 					struct files_struct *fsp,
-					enum vfs_fallocate_mode mode,
+					uint32_t mode,
 					off_t offset,
 					off_t len)
 {

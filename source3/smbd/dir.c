@@ -64,12 +64,12 @@ struct smb_Dir {
 struct dptr_struct {
 	struct dptr_struct *next, *prev;
 	int dnum;
-	uint16 spid;
+	uint16_t spid;
 	struct connection_struct *conn;
 	struct smb_Dir *dir_hnd;
 	bool expect_close;
 	char *wcard;
-	uint32 attr;
+	uint32_t attr;
 	char *path;
 	bool has_wild; /* Set to true if the wcard entry has MS wildcard characters in it. */
 	bool did_stat; /* Optimisation for non-wcard searches. */
@@ -81,7 +81,7 @@ struct dptr_struct {
 static struct smb_Dir *OpenDir_fsp(TALLOC_CTX *mem_ctx, connection_struct *conn,
 			files_struct *fsp,
 			const char *mask,
-			uint32 attr);
+			uint32_t attr);
 
 static void DirCacheAdd(struct smb_Dir *dirp, const char *name, long offset);
 
@@ -209,7 +209,7 @@ const char *dptr_wcard(struct smbd_server_connection *sconn, int key)
  Get the dir attrib for a dir index.
 ****************************************************************************/
 
-uint16 dptr_attr(struct smbd_server_connection *sconn, int key)
+uint16_t dptr_attr(struct smbd_server_connection *sconn, int key)
 {
 	struct dptr_struct *dptr = dptr_get(sconn, key, false);
 	if (dptr)
@@ -334,7 +334,7 @@ void dptr_idlecnum(connection_struct *conn)
 ****************************************************************************/
 
 void dptr_closepath(struct smbd_server_connection *sconn,
-		    char *path,uint16 spid)
+		    char *path,uint16_t spid)
 {
 	struct dptr_struct *dptr, *next;
 	for(dptr = sconn->searches.dirptrs; dptr; dptr = next) {
@@ -444,8 +444,8 @@ static struct smb_Dir *open_dir_with_privilege(connection_struct *conn,
 NTSTATUS dptr_create(connection_struct *conn,
 		struct smb_request *req,
 		files_struct *fsp,
-		const char *path, bool old_handle, bool expect_close,uint16 spid,
-		const char *wcard, bool wcard_has_wild, uint32 attr, struct dptr_struct **dptr_ret)
+		const char *path, bool old_handle, bool expect_close,uint16_t spid,
+		const char *wcard, bool wcard_has_wild, uint32_t attr, struct dptr_struct **dptr_ret)
 {
 	struct smbd_server_connection *sconn = conn->sconn;
 	struct dptr_struct *dptr = NULL;
@@ -522,14 +522,12 @@ NTSTATUS dptr_create(connection_struct *conn,
 		dptr_idleoldest(sconn);
 	}
 
-	dptr = talloc(NULL, struct dptr_struct);
+	dptr = talloc_zero(NULL, struct dptr_struct);
 	if(!dptr) {
 		DEBUG(0,("talloc fail in dptr_create.\n"));
 		TALLOC_FREE(dir_hnd);
 		return NT_STATUS_NO_MEMORY;
 	}
-
-	ZERO_STRUCTP(dptr);
 
 	dptr->path = talloc_strdup(dptr, path);
 	if (!dptr->path) {
@@ -773,8 +771,7 @@ static char *dptr_ReadDirName(TALLOC_CTX *ctx,
 		return NULL;
 
 	/* Create an smb_filename with stream_name == NULL. */
-	ZERO_STRUCT(smb_fname_base);
-	smb_fname_base.base_name = pathreal;
+	smb_fname_base = (struct smb_filename) { .base_name = pathreal };
 
 	if (SMB_VFS_STAT(dptr->conn, &smb_fname_base) == 0) {
 		*pst = smb_fname_base.st;
@@ -1071,6 +1068,7 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 	connection_struct *conn = dirptr->conn;
 	size_t slashlen;
 	size_t pathlen;
+	bool dirptr_path_is_dot = ISDOT(dirptr->path);
 
 	*_smb_fname = NULL;
 	*_mode = 0;
@@ -1135,15 +1133,23 @@ bool smbd_dirptr_get_entry(TALLOC_CTX *ctx,
 			return false;
 		}
 
-		memcpy(pathreal, dirptr->path, pathlen);
-		pathreal[pathlen] = '/';
-		memcpy(pathreal + slashlen + pathlen, dname,
-		       talloc_get_size(dname));
+		/*
+		 * We don't want to pass ./xxx to modules below us so don't
+		 * add the path if it is just . by itself.
+		 */
+		if (dirptr_path_is_dot) {
+			memcpy(pathreal, dname, talloc_get_size(dname));
+		} else {
+			memcpy(pathreal, dirptr->path, pathlen);
+			pathreal[pathlen] = '/';
+			memcpy(pathreal + slashlen + pathlen, dname,
+			       talloc_get_size(dname));
+		}
 
 		/* Create smb_fname with NULL stream_name. */
-		ZERO_STRUCT(smb_fname);
-		smb_fname.base_name = pathreal;
-		smb_fname.st = sbuf;
+		smb_fname = (struct smb_filename) {
+			.base_name = pathreal, .st = sbuf
+		};
 
 		ok = mode_fn(ctx, private_data, &smb_fname, &mode);
 		if (!ok) {
@@ -1224,7 +1230,7 @@ static bool smbd_dirptr_8_3_match_fn(TALLOC_CTX *ctx,
 		size_t ret_len = 0;
 		size_t len = (strlen(dname) + 2) * 4; /* Allow enough space. */
 		uint8_t *tmp = talloc_array(talloc_tos(),
-					uint8,
+					uint8_t,
 					len);
 
 		status = srvstr_push(NULL,
@@ -1337,6 +1343,15 @@ bool get_dir_entry(TALLOC_CTX *ctx,
 static bool user_can_read_file(connection_struct *conn,
 			       struct smb_filename *smb_fname)
 {
+	NTSTATUS status;
+	uint32_t rejected_share_access = 0;
+	uint32_t rejected_mask = 0;
+	struct security_descriptor *sd = NULL;
+	uint32_t access_mask = FILE_READ_DATA|
+				FILE_READ_EA|
+				FILE_READ_ATTRIBUTES|
+				SEC_STD_READ_CONTROL;
+
 	/*
 	 * Never hide files from the root user.
 	 * We use (uid_t)0 here not sec_initial_uid()
@@ -1347,10 +1362,59 @@ static bool user_can_read_file(connection_struct *conn,
 		return True;
 	}
 
-	return NT_STATUS_IS_OK(smbd_check_access_rights(conn,
-				smb_fname,
+	/*
+	 * We can't directly use smbd_check_access_rights()
+	 * here, as this implicitly grants FILE_READ_ATTRIBUTES
+	 * which the Windows access-based-enumeration code
+	 * explicitly checks for on the file security descriptor.
+	 * See bug:
+	 *
+	 * https://bugzilla.samba.org/show_bug.cgi?id=10252
+	 *
+	 * and the smb2.acl2.ACCESSBASED test for details.
+	 */
+
+	rejected_share_access = access_mask & ~(conn->share_access);
+	if (rejected_share_access) {
+		DEBUG(10, ("rejected share access 0x%x "
+			"on %s (0x%x)\n",
+			(unsigned int)access_mask,
+			smb_fname_str_dbg(smb_fname),
+			(unsigned int)rejected_share_access ));
+		return false;
+        }
+
+	status = SMB_VFS_GET_NT_ACL(conn,
+			smb_fname->base_name,
+			(SECINFO_OWNER |
+			 SECINFO_GROUP |
+			 SECINFO_DACL),
+			talloc_tos(),
+			&sd);
+
+	if (!NT_STATUS_IS_OK(status)) {
+                DEBUG(10, ("Could not get acl "
+			"on %s: %s\n",
+			smb_fname_str_dbg(smb_fname),
+			nt_errstr(status)));
+		return false;
+        }
+
+	status = se_file_access_check(sd,
+				get_current_nttok(conn),
 				false,
-				FILE_READ_DATA));
+				access_mask,
+				&rejected_mask);
+
+        TALLOC_FREE(sd);
+
+	if (NT_STATUS_EQUAL(status, NT_STATUS_ACCESS_DENIED)) {
+		DEBUG(10,("rejected bits 0x%x read access for %s\n",
+			(unsigned int)rejected_mask,
+			smb_fname_str_dbg(smb_fname) ));
+		return false;
+        }
+	return true;
 }
 
 /*******************************************************************
@@ -1459,9 +1523,8 @@ bool is_visible_file(connection_struct *conn, const char *dir_path,
 			if (SMB_VFS_STAT(conn, smb_fname_base) != 0) {
 				ret = true;
 				goto out;
-			} else {
-				*pst = smb_fname_base->st;
 			}
+			*pst = smb_fname_base->st;
 		}
 
 		/* Honour _hide unreadable_ option */
@@ -1527,7 +1590,7 @@ static int smb_Dir_destructor(struct smb_Dir *dirp)
 struct smb_Dir *OpenDir(TALLOC_CTX *mem_ctx, connection_struct *conn,
 			const char *name,
 			const char *mask,
-			uint32 attr)
+			uint32_t attr)
 {
 	struct smb_Dir *dirp = talloc_zero(mem_ctx, struct smb_Dir);
 	struct smbd_server_connection *sconn = conn->sconn;
@@ -1571,7 +1634,7 @@ struct smb_Dir *OpenDir(TALLOC_CTX *mem_ctx, connection_struct *conn,
 static struct smb_Dir *OpenDir_fsp(TALLOC_CTX *mem_ctx, connection_struct *conn,
 			files_struct *fsp,
 			const char *mask,
-			uint32 attr)
+			uint32_t attr)
 {
 	struct smb_Dir *dirp = talloc_zero(mem_ctx, struct smb_Dir);
 	struct smbd_server_connection *sconn = conn->sconn;
@@ -1655,13 +1718,15 @@ const char *ReadDirName(struct smb_Dir *dirp, long *poffset,
 		dirp->file_number++;
 		*ptalloced = NULL;
 		return n;
-	} else if (*poffset == END_OF_DIRECTORY_OFFSET) {
+	}
+
+	if (*poffset == END_OF_DIRECTORY_OFFSET) {
 		*poffset = dirp->offset = END_OF_DIRECTORY_OFFSET;
 		return NULL;
-	} else {
-		/* A real offset, seek to it. */
-		SeekDir(dirp, *poffset);
 	}
+
+	/* A real offset, seek to it. */
+	SeekDir(dirp, *poffset);
 
 	while ((n = vfs_readdirname(conn, dirp->dir, sbuf, &talloced))) {
 		/* Ignore . and .. - we've already returned them. */

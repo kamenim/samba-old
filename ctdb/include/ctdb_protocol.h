@@ -156,6 +156,9 @@ struct ctdb_call_info {
 /* A message handler ID to stop takeover runs from occurring */
 #define CTDB_SRVID_DISABLE_TAKEOVER_RUNS 0xFB03000000000000LL
 
+/* A message handler ID to stop recoveries from occurring */
+#define CTDB_SRVID_DISABLE_RECOVERIES 0xFB04000000000000LL
+
 /* A message id to ask the recovery daemon to temporarily disable the
    public ip checks
 */
@@ -295,7 +298,7 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_SET_RECMODE             = 16,
 		    CTDB_CONTROL_STATISTICS_RESET        = 17,
 		    CTDB_CONTROL_DB_ATTACH               = 18,
-		    CTDB_CONTROL_SET_CALL                = 19,
+		    CTDB_CONTROL_SET_CALL                = 19, /* obsolete */
 		    CTDB_CONTROL_TRAVERSE_START          = 20,
 		    CTDB_CONTROL_TRAVERSE_ALL            = 21,
 		    CTDB_CONTROL_TRAVERSE_DATA           = 22,
@@ -411,6 +414,12 @@ enum ctdb_controls {CTDB_CONTROL_PROCESS_EXISTS          = 0,
 		    CTDB_CONTROL_IPREALLOCATED		 = 137,
 		    CTDB_CONTROL_GET_RUNSTATE		 = 138,
 		    CTDB_CONTROL_DB_DETACH		 = 139,
+		    CTDB_CONTROL_GET_NODES_FILE		 = 140,
+		    CTDB_CONTROL_DB_FREEZE		 = 141,
+		    CTDB_CONTROL_DB_THAW		 = 142,
+		    CTDB_CONTROL_DB_TRANSACTION_START	 = 143,
+		    CTDB_CONTROL_DB_TRANSACTION_COMMIT	 = 144,
+		    CTDB_CONTROL_DB_TRANSACTION_CANCEL	 = 145,
 };
 
 /*
@@ -474,17 +483,6 @@ struct ctdb_reply_dmaster {
 struct ctdb_req_message {
 	struct ctdb_req_header hdr;
 	uint64_t srvid;
-	uint32_t datalen;
-	uint8_t data[1];
-};
-
-struct ctdb_req_getdbpath {
-	struct ctdb_req_header hdr;
-	uint32_t db_id;
-};
-
-struct ctdb_reply_getdbpath {
-	struct ctdb_req_header hdr;
 	uint32_t datalen;
 	uint8_t data[1];
 };
@@ -591,6 +589,16 @@ struct ctdb_node_map {
 /* This capability is set if NATGW is enabled */
 #define CTDB_CAP_NATGW			0x00000008
 
+/*
+ * Node features
+ */
+#define CTDB_CAP_PARALLEL_RECOVERY	0x00010000
+
+#define CTDB_CAP_FEATURES		(CTDB_CAP_PARALLEL_RECOVERY)
+
+#define CTDB_CAP_DEFAULT		(CTDB_CAP_RECMASTER | \
+					 CTDB_CAP_LMASTER   | \
+					 CTDB_CAP_FEATURES)
 
 struct ctdb_public_ip {
 	uint32_t pnn;

@@ -18,8 +18,10 @@
 
 #include "replace.h"
 #include "lib/msghdr.h"
-#include "lib/iov_buf.h"
+#include "lib/util/iov_buf.h"
 #include <sys/socket.h>
+
+#if defined(HAVE_STRUCT_MSGHDR_MSG_CONTROL)
 
 ssize_t msghdr_prep_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
 			const int *fds, size_t num_fds)
@@ -56,74 +58,6 @@ ssize_t msghdr_prep_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
 	msg->msg_controllen = cmsg->cmsg_len;
 
 	return cmsg_space;
-}
-
-struct msghdr_buf {
-	struct msghdr msg;
-	struct sockaddr_storage addr;
-	struct iovec iov;
-	uint8_t buf[];
-};
-
-ssize_t msghdr_copy(struct msghdr_buf *msg, size_t msgsize,
-		    const void *addr, socklen_t addrlen,
-		    const struct iovec *iov, int iovcnt,
-		    const int *fds, size_t num_fds)
-{
-	size_t fd_len, iov_len, needed, bufsize;
-
-	bufsize = (msgsize > offsetof(struct msghdr_buf, buf)) ?
-		msgsize - offsetof(struct msghdr_buf, buf) : 0;
-
-	fd_len = msghdr_prep_fds(&msg->msg, msg->buf, bufsize, fds, num_fds);
-
-	if (bufsize >= fd_len) {
-		bufsize -= fd_len;
-	} else {
-		bufsize = 0;
-	}
-
-	if (msg != NULL) {
-
-		if (addr != NULL) {
-			if (addrlen > sizeof(struct sockaddr_storage)) {
-				errno = EMSGSIZE;
-				return -1;
-			}
-			memcpy(&msg->addr, addr, addrlen);
-			msg->msg.msg_name = &msg->addr;
-			msg->msg.msg_namelen = addrlen;
-		} else {
-			msg->msg.msg_name = NULL;
-			msg->msg.msg_namelen = 0;
-		}
-
-		msg->iov.iov_base = msg->buf + fd_len;
-		msg->iov.iov_len = iov_buf(
-			iov, iovcnt, msg->iov.iov_base, bufsize);
-		iov_len = msg->iov.iov_len;
-
-		msg->msg.msg_iov = &msg->iov;
-		msg->msg.msg_iovlen = 1;
-	} else {
-		iov_len = iov_buflen(iov, iovcnt);
-	}
-
-	needed = offsetof(struct msghdr_buf, buf) + fd_len;
-	if (needed < fd_len) {
-		return -1;
-	}
-	needed += iov_len;
-	if (needed < iov_len) {
-		return -1;
-	}
-
-	return needed;
-}
-
-struct msghdr *msghdr_buf_msghdr(struct msghdr_buf *msg)
-{
-	return &msg->msg;
 }
 
 size_t msghdr_prep_recv_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
@@ -172,4 +106,155 @@ size_t msghdr_extract_fds(struct msghdr *msg, int *fds, size_t fds_size)
 	}
 
 	return num_fds;
+}
+
+#elif defined(HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS)
+
+ssize_t msghdr_prep_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
+			const int *fds, size_t num_fds)
+{
+	size_t needed;
+
+	if (num_fds > INT8_MAX) {
+		return -1;
+	}
+
+	needed = sizeof(int) * num_fds;
+
+	if ((msg == NULL) || (needed > bufsize)) {
+		return needed;
+	}
+
+	memcpy(buf, fds, needed);
+
+	msg->msg_accrights = (caddr_t) buf;
+	msg->msg_accrightslen = needed;
+
+	return needed;
+}
+
+size_t msghdr_prep_recv_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
+			    size_t num_fds)
+{
+	size_t ret = num_fds * sizeof(int);
+
+	if (bufsize < ret) {
+		return ret;
+	}
+
+	if (msg != NULL) {
+		if (num_fds != 0) {
+			msg->msg_accrights = (caddr_t) buf;
+			msg->msg_accrightslen = ret;
+		} else {
+			msg->msg_accrights = NULL;
+			msg->msg_accrightslen = 0;
+		}
+	}
+	return ret;
+}
+
+size_t msghdr_extract_fds(struct msghdr *msg, int *fds, size_t fds_size)
+{
+	size_t num_fds = msg->msg_accrightslen / sizeof(int);
+
+	if ((fds != 0) && (num_fds <= fds_size)) {
+		memcpy(fds, msg->msg_accrights, msg->msg_accrightslen);
+	}
+
+	return num_fds;
+}
+
+#else
+
+ssize_t msghdr_prep_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
+			const int *fds, size_t num_fds)
+{
+	return -1;
+}
+
+size_t msghdr_prep_recv_fds(struct msghdr *msg, uint8_t *buf, size_t bufsize,
+			    size_t num_fds)
+{
+	return 0;
+}
+
+size_t msghdr_extract_fds(struct msghdr *msg, int *fds, size_t fds_size)
+{
+	return 0;
+}
+
+#endif
+
+struct msghdr_buf {
+	struct msghdr msg;
+	struct sockaddr_storage addr;
+	struct iovec iov;
+	uint8_t buf[];
+};
+
+ssize_t msghdr_copy(struct msghdr_buf *msg, size_t msgsize,
+		    const void *addr, socklen_t addrlen,
+		    const struct iovec *iov, int iovcnt,
+		    const int *fds, size_t num_fds)
+{
+	ssize_t fd_len;
+	size_t iov_len, needed, bufsize;
+
+	bufsize = (msgsize > offsetof(struct msghdr_buf, buf)) ?
+		msgsize - offsetof(struct msghdr_buf, buf) : 0;
+
+	fd_len = msghdr_prep_fds(&msg->msg, msg->buf, bufsize, fds, num_fds);
+
+	if (fd_len == -1) {
+		return -1;
+	}
+
+	if (bufsize >= fd_len) {
+		bufsize -= fd_len;
+	} else {
+		bufsize = 0;
+	}
+
+	if (msg != NULL) {
+
+		if (addr != NULL) {
+			if (addrlen > sizeof(struct sockaddr_storage)) {
+				errno = EMSGSIZE;
+				return -1;
+			}
+			memcpy(&msg->addr, addr, addrlen);
+			msg->msg.msg_name = &msg->addr;
+			msg->msg.msg_namelen = addrlen;
+		} else {
+			msg->msg.msg_name = NULL;
+			msg->msg.msg_namelen = 0;
+		}
+
+		msg->iov.iov_base = msg->buf + fd_len;
+		msg->iov.iov_len = iov_buf(
+			iov, iovcnt, msg->iov.iov_base, bufsize);
+		iov_len = msg->iov.iov_len;
+
+		msg->msg.msg_iov = &msg->iov;
+		msg->msg.msg_iovlen = 1;
+	} else {
+		iov_len = iov_buflen(iov, iovcnt);
+	}
+
+	needed = offsetof(struct msghdr_buf, buf) + fd_len;
+	if (needed < fd_len) {
+		return -1;
+	}
+	needed += iov_len;
+	if (needed < iov_len) {
+		return -1;
+	}
+
+	return needed;
+}
+
+struct msghdr *msghdr_buf_msghdr(struct msghdr_buf *msg)
+{
+	return &msg->msg;
 }

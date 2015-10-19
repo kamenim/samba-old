@@ -303,6 +303,15 @@ uint32_t smb2cli_conn_max_read_size(struct smbXcli_conn *conn);
 uint32_t smb2cli_conn_max_write_size(struct smbXcli_conn *conn);
 void smb2cli_conn_set_max_credits(struct smbXcli_conn *conn,
 				  uint16_t max_credits);
+uint8_t smb2cli_conn_get_io_priority(struct smbXcli_conn *conn);
+void smb2cli_conn_set_io_priority(struct smbXcli_conn *conn,
+				  uint8_t io_priority);
+uint32_t smb2cli_conn_cc_chunk_len(struct smbXcli_conn *conn);
+void smb2cli_conn_set_cc_chunk_len(struct smbXcli_conn *conn,
+				   uint32_t chunk_len);
+uint32_t smb2cli_conn_cc_max_chunks(struct smbXcli_conn *conn);
+void smb2cli_conn_set_cc_max_chunks(struct smbXcli_conn *conn,
+				    uint32_t max_chunks);
 
 struct tevent_req *smb2cli_req_create(TALLOC_CTX *mem_ctx,
 				      struct tevent_context *ev,
@@ -433,6 +442,7 @@ bool smb1cli_tcon_set_values(struct smbXcli_tcon *tcon,
 			     const char *fs_type);
 uint32_t smb2cli_tcon_current_id(struct smbXcli_tcon *tcon);
 uint32_t smb2cli_tcon_capabilities(struct smbXcli_tcon *tcon);
+uint32_t smb2cli_tcon_flags(struct smbXcli_tcon *tcon);
 void smb2cli_tcon_set_values(struct smbXcli_tcon *tcon,
 			     struct smbXcli_session *session,
 			     uint32_t tcon_id,

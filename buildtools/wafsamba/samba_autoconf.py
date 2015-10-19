@@ -229,7 +229,18 @@ def CHECK_DECLS(conf, vars, reverse=False, headers=None, always=False):
                               headers=headers,
                               msg='Checking for declaration of %s' % v,
                               always=always):
-            ret = False
+            if not CHECK_CODE(conf,
+                      '''
+                      return (int)%s;
+                      ''' % (v),
+                      execute=False,
+                      link=False,
+                      msg='Checking for declaration of %s (as enum)' % v,
+                      local_include=False,
+                      headers=headers,
+                      define=define,
+                      always=always):
+                ret = False
     return ret
 
 
@@ -558,7 +569,7 @@ int foo()
 
         (ccflags, ldflags, cpppath) = library_flags(conf, lib)
         if shlib:
-            res = conf.check(features='cc cshlib', fragment=fragment, lib=lib, uselib_store=lib, ccflags=ccflags, ldflags=ldflags, uselib=lib.upper())
+            res = conf.check(features='c cshlib', fragment=fragment, lib=lib, uselib_store=lib, ccflags=ccflags, ldflags=ldflags, uselib=lib.upper())
         else:
             res = conf.check(lib=lib, uselib_store=lib, ccflags=ccflags, ldflags=ldflags, uselib=lib.upper())
 
@@ -646,9 +657,23 @@ def SAMBA_CONFIG_H(conf, path=None):
     if not IN_LAUNCH_DIR(conf):
         return
 
-    if conf.CHECK_CFLAGS(['-fstack-protector']) and conf.CHECK_LDFLAGS(['-fstack-protector']):
-        conf.ADD_CFLAGS('-fstack-protector')
-        conf.ADD_LDFLAGS('-fstack-protector')
+    # we need to build real code that can't be optimized away to test
+    if conf.check(fragment='''
+        #include <stdio.h>
+
+        int main(void)
+        {
+            char t[100000];
+            while (fgets(t, sizeof(t), stdin));
+            return 0;
+        }
+        ''',
+        execute=0,
+        ccflags='-fstack-protector',
+        ldflags='-fstack-protector',
+        msg='Checking if toolchain accepts -fstack-protector'):
+            conf.ADD_CFLAGS('-fstack-protector')
+            conf.ADD_LDFLAGS('-fstack-protector')
 
     if Options.options.debug:
         conf.ADD_CFLAGS('-g', testflags=True)
@@ -676,6 +701,8 @@ def SAMBA_CONFIG_H(conf, path=None):
         conf.ADD_CFLAGS('-Werror=declaration-after-statement -Wdeclaration-after-statement',
                         testflags=True)
         conf.ADD_CFLAGS('-Werror=return-type -Wreturn-type',
+                        testflags=True)
+        conf.ADD_CFLAGS('-Werror=uninitialized -Wuninitialized',
                         testflags=True)
 
         conf.ADD_CFLAGS('-Wformat=2 -Wno-format-y2k', testflags=True)
@@ -844,3 +871,7 @@ def SAMBA_CHECK_UNDEFINED_SYMBOL_FLAGS(conf):
     if not sys.platform.startswith("openbsd") and conf.env.undefined_ignore_ldflags == []:
         if conf.CHECK_LDFLAGS(['-undefined', 'dynamic_lookup']):
             conf.env.undefined_ignore_ldflags = ['-undefined', 'dynamic_lookup']
+
+@conf
+def CHECK_CFG(self, *k, **kw):
+    return self.check_cfg(*k, **kw)

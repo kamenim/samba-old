@@ -197,7 +197,7 @@ int foo(int v) {
     return v * 2;
 }
 '''
-    return conf.check(features='cc cshlib',vnum="1",fragment=snip,msg=msg)
+    return conf.check(features='c cshlib',vnum="1",fragment=snip,msg=msg)
 
 @conf
 def CHECK_NEED_LC(conf, msg):
@@ -216,9 +216,7 @@ def CHECK_NEED_LC(conf, msg):
 
     os.makedirs(subdir)
 
-    dest = open(os.path.join(subdir, 'liblc1.c'), 'w')
-    dest.write('#include <stdio.h>\nint lib_func(void) { FILE *f = fopen("foo", "r");}\n')
-    dest.close()
+    Utils.writef(os.path.join(subdir, 'liblc1.c'), '#include <stdio.h>\nint lib_func(void) { FILE *f = fopen("foo", "r");}\n')
 
     bld = Build.BuildContext()
     bld.log = conf.log
@@ -229,7 +227,7 @@ def CHECK_NEED_LC(conf, msg):
 
     bld.rescan(bld.srcnode)
 
-    bld(features='cc cshlib',
+    bld(features='c cshlib',
         source='liblctest/liblc1.c',
         ldflags=conf.env['EXTRA_LDFLAGS'],
         target='liblc',
@@ -264,7 +262,7 @@ int foo(int v) {
     ldb_module = PyImport_ImportModule("ldb");
     return v * 2;
 }'''
-    return conf.check(features='cc cshlib',uselib='PYEMBED',fragment=snip,msg=msg)
+    return conf.check(features='c cshlib',uselib='PYEMBED',fragment=snip,msg=msg)
 
 # this one is quite complex, and should probably be broken up
 # into several parts. I'd quite like to create a set of CHECK_COMPOUND()
@@ -291,13 +289,8 @@ def CHECK_LIBRARY_SUPPORT(conf, rpath=False, version_script=False, msg=None):
 
     os.makedirs(subdir)
 
-    dest = open(os.path.join(subdir, 'lib1.c'), 'w')
-    dest.write('int lib_func(void) { return 42; }\n')
-    dest.close()
-
-    dest = open(os.path.join(dir, 'main.c'), 'w')
-    dest.write('int main(void) {return !(lib_func() == 42);}\n')
-    dest.close()
+    Utils.writef(os.path.join(subdir, 'lib1.c'), 'int lib_func(void) { return 42; }\n')
+    Utils.writef(os.path.join(dir, 'main.c'), 'int main(void) {return !(lib_func() == 42);}\n')
 
     bld = Build.BuildContext()
     bld.log = conf.log
@@ -311,17 +304,15 @@ def CHECK_LIBRARY_SUPPORT(conf, rpath=False, version_script=False, msg=None):
     ldflags = []
     if version_script:
         ldflags.append("-Wl,--version-script=%s/vscript" % bld.path.abspath())
-        dest = open(os.path.join(dir,'vscript'), 'w')
-        dest.write('TEST_1.0A2 { global: *; };\n')
-        dest.close()
+        Utils.writef(os.path.join(dir,'vscript'), 'TEST_1.0A2 { global: *; };\n')
 
-    bld(features='cc cshlib',
+    bld(features='c cshlib',
         source='libdir/lib1.c',
         target='libdir/lib1',
         ldflags=ldflags,
         name='lib1')
 
-    o = bld(features='cc cprogram',
+    o = bld(features='c cprogram',
             source='main.c',
             target='prog1',
             uselib_local='lib1')
@@ -383,15 +374,13 @@ def CHECK_PERL_MANPAGE(conf, msg=None, section=None):
     if not os.path.exists(bdir):
         os.makedirs(bdir)
 
-    dest = open(os.path.join(bdir, 'Makefile.PL'), 'w')
-    dest.write("""
+    Utils.writef(os.path.join(bdir, 'Makefile.PL'), """
 use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'    => 'WafTest',
     'EXE_FILES' => [ 'WafTest' ]
 );
 """)
-    dest.close()
     back = os.path.abspath('.')
     os.chdir(bdir)
     proc = Utils.pproc.Popen(['perl', 'Makefile.PL'],
@@ -406,9 +395,7 @@ WriteMakefile(
         return
 
     if section:
-        f = open(os.path.join(bdir,'Makefile'), 'r')
-        man = f.read()
-        f.close()
+        man = Utils.readf(os.path.join(bdir,'Makefile'))
         m = re.search('MAN%sEXT\s+=\s+(\w+)' % section, man)
         if not m:
             conf.check_message_2('not found', color='YELLOW')
@@ -565,7 +552,6 @@ def samba_config_c_parse_flags(line1, uselib, env):
         # bugs in the real parse_flags() function.
         #
         if x == '-Wl,-rpath' or x == '-Wl,-R':
-            linkflags.remove(x)
             x = lst1.pop(0)
             if x.startswith('-Wl,'):
                 rpath = x[4:]

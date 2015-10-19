@@ -41,6 +41,10 @@
  * ctdb_lock_alldb()       - get a lock on all DBs
  *
  *  auto_mark              - whether to mark/unmark DBs in before/after callback
+ *                           = false is used for freezing databases for
+ *                           recovery since the recovery cannot start till
+ *                           databases are locked on all the nodes.
+ *                           = true is used for record locks.
  */
 
 enum lock_type {
@@ -109,12 +113,8 @@ static bool later_db(struct ctdb_context *ctdb, const char *name)
 	return false;
 }
 
-typedef int (*db_handler_t)(struct ctdb_db_context *ctdb_db,
-			    uint32_t priority,
-			    void *private_data);
-
-static int ctdb_db_iterator(struct ctdb_context *ctdb, uint32_t priority,
-			    db_handler_t handler, void *private_data)
+int ctdb_db_prio_iterator(struct ctdb_context *ctdb, uint32_t priority,
+			  ctdb_db_handler_t handler, void *private_data)
 {
 	struct ctdb_db_context *ctdb_db;
 	int ret;
@@ -126,7 +126,7 @@ static int ctdb_db_iterator(struct ctdb_context *ctdb, uint32_t priority,
 		if (later_db(ctdb, ctdb_db->db_name)) {
 			continue;
 		}
-		ret = handler(ctdb_db, priority, private_data);
+		ret = handler(ctdb_db, private_data);
 		if (ret != 0) {
 			return -1;
 		}
@@ -141,7 +141,7 @@ static int ctdb_db_iterator(struct ctdb_context *ctdb, uint32_t priority,
 		if (!later_db(ctdb, ctdb_db->db_name)) {
 			continue;
 		}
-		ret = handler(ctdb_db, priority, private_data);
+		ret = handler(ctdb_db, private_data);
 		if (ret != 0) {
 			return -1;
 		}
@@ -150,17 +150,31 @@ static int ctdb_db_iterator(struct ctdb_context *ctdb, uint32_t priority,
 	return 0;
 }
 
+int ctdb_db_iterator(struct ctdb_context *ctdb, ctdb_db_handler_t handler,
+		     void *private_data)
+{
+	struct ctdb_db_context *ctdb_db;
+	int ret;
+
+	for (ctdb_db = ctdb->db_list; ctdb_db; ctdb_db = ctdb_db->next) {
+		ret = handler(ctdb_db, private_data);
+		if (ret != 0) {
+			return -1;
+		}
+	}
+
+	return 0;
+}
 
 /*
  * lock all databases - mark only
  */
-static int db_lock_mark_handler(struct ctdb_db_context *ctdb_db, uint32_t priority,
+static int db_lock_mark_handler(struct ctdb_db_context *ctdb_db,
 				void *private_data)
 {
 	int tdb_transaction_write_lock_mark(struct tdb_context *);
 
-	DEBUG(DEBUG_INFO, ("marking locked database %s, priority:%u\n",
-			   ctdb_db->db_name, priority));
+	DEBUG(DEBUG_INFO, ("marking locked database %s\n", ctdb_db->db_name));
 
 	if (tdb_transaction_write_lock_mark(ctdb_db->ltdb->tdb) != 0) {
 		DEBUG(DEBUG_ERR, ("Failed to mark (transaction lock) database %s\n",
@@ -177,21 +191,31 @@ static int db_lock_mark_handler(struct ctdb_db_context *ctdb_db, uint32_t priori
 	return 0;
 }
 
+int ctdb_lockdb_mark(struct ctdb_db_context *ctdb_db)
+{
+	if (!ctdb_db_frozen(ctdb_db)) {
+		DEBUG(DEBUG_ERR,
+		      ("Attempt to mark database locked when not frozen\n"));
+		return -1;
+	}
+
+	return db_lock_mark_handler(ctdb_db, NULL);
+}
+
 int ctdb_lockall_mark_prio(struct ctdb_context *ctdb, uint32_t priority)
 {
 	/*
 	 * This function is only used by the main dameon during recovery.
 	 * At this stage, the databases have already been locked, by a
-	 * dedicated child process. The freeze_mode variable is used to track
-	 * whether the actual locks are held by the child process or not.
+	 * dedicated child process.
 	 */
 
-	if (ctdb->freeze_mode[priority] != CTDB_FREEZE_FROZEN) {
+	if (!ctdb_db_prio_frozen(ctdb, priority)) {
 		DEBUG(DEBUG_ERR, ("Attempt to mark all databases locked when not frozen\n"));
 		return -1;
 	}
 
-	return ctdb_db_iterator(ctdb, priority, db_lock_mark_handler, NULL);
+	return ctdb_db_prio_iterator(ctdb, priority, db_lock_mark_handler, NULL);
 }
 
 static int ctdb_lockall_mark(struct ctdb_context *ctdb)
@@ -199,7 +223,11 @@ static int ctdb_lockall_mark(struct ctdb_context *ctdb)
 	uint32_t priority;
 
 	for (priority=1; priority<=NUM_DB_PRIORITIES; priority++) {
-		if (ctdb_db_iterator(ctdb, priority, db_lock_mark_handler, NULL) != 0) {
+		int ret;
+
+		ret = ctdb_db_prio_iterator(ctdb, priority,
+					    db_lock_mark_handler, NULL);
+		if (ret != 0) {
 			return -1;
 		}
 	}
@@ -211,13 +239,12 @@ static int ctdb_lockall_mark(struct ctdb_context *ctdb)
 /*
  * lock all databases - unmark only
  */
-static int db_lock_unmark_handler(struct ctdb_db_context *ctdb_db, uint32_t priority,
+static int db_lock_unmark_handler(struct ctdb_db_context *ctdb_db,
 				  void *private_data)
 {
 	int tdb_transaction_write_lock_unmark(struct tdb_context *);
 
-	DEBUG(DEBUG_INFO, ("unmarking locked database %s, priority:%u\n",
-			   ctdb_db->db_name, priority));
+	DEBUG(DEBUG_INFO, ("unmarking locked database %s\n", ctdb_db->db_name));
 
 	if (tdb_transaction_write_lock_unmark(ctdb_db->ltdb->tdb) != 0) {
 		DEBUG(DEBUG_ERR, ("Failed to unmark (transaction lock) database %s\n",
@@ -234,21 +261,32 @@ static int db_lock_unmark_handler(struct ctdb_db_context *ctdb_db, uint32_t prio
 	return 0;
 }
 
+int ctdb_lockdb_unmark(struct ctdb_db_context *ctdb_db)
+{
+	if (!ctdb_db_frozen(ctdb_db)) {
+		DEBUG(DEBUG_ERR,
+		      ("Attempt to unmark database locked when not frozen\n"));
+		return -1;
+	}
+
+	return db_lock_unmark_handler(ctdb_db, NULL);
+}
+
 int ctdb_lockall_unmark_prio(struct ctdb_context *ctdb, uint32_t priority)
 {
 	/*
 	 * This function is only used by the main daemon during recovery.
 	 * At this stage, the databases have already been locked, by a
-	 * dedicated child process. The freeze_mode variable is used to track
-	 * whether the actual locks are held by the child process or not.
+	 * dedicated child process.
 	 */
 
-	if (ctdb->freeze_mode[priority] != CTDB_FREEZE_FROZEN) {
+	if (!ctdb_db_prio_frozen(ctdb, priority)) {
 		DEBUG(DEBUG_ERR, ("Attempt to unmark all databases locked when not frozen\n"));
 		return -1;
 	}
 
-	return ctdb_db_iterator(ctdb, priority, db_lock_unmark_handler, NULL);
+	return ctdb_db_prio_iterator(ctdb, priority, db_lock_unmark_handler,
+				     NULL);
 }
 
 static int ctdb_lockall_unmark(struct ctdb_context *ctdb)
@@ -256,7 +294,11 @@ static int ctdb_lockall_unmark(struct ctdb_context *ctdb)
 	uint32_t priority;
 
 	for (priority=NUM_DB_PRIORITIES; priority>0; priority--) {
-		if (ctdb_db_iterator(ctdb, priority, db_lock_unmark_handler, NULL) != 0) {
+		int ret;
+
+		ret = ctdb_db_prio_iterator(ctdb, priority,
+					    db_lock_unmark_handler, NULL);
+		if (ret != 0) {
 			return -1;
 		}
 	}
@@ -312,7 +354,13 @@ static int ctdb_lock_context_destructor(struct lock_context *lock_ctx)
  */
 static int ctdb_lock_request_destructor(struct lock_request *lock_request)
 {
+	if (lock_request->lctx == NULL) {
+		return 0;
+	}
+
+	lock_request->lctx->request = NULL;
 	TALLOC_FREE(lock_request->lctx);
+
 	return 0;
 }
 
@@ -324,15 +372,16 @@ static int ctdb_lock_request_destructor(struct lock_request *lock_request)
 static void process_callbacks(struct lock_context *lock_ctx, bool locked)
 {
 	struct lock_request *request;
+	bool auto_mark = lock_ctx->auto_mark;
 
-	if (lock_ctx->auto_mark && locked) {
+	if (auto_mark && locked) {
 		switch (lock_ctx->type) {
 		case LOCK_RECORD:
 			tdb_chainlock_mark(lock_ctx->ctdb_db->ltdb->tdb, lock_ctx->key);
 			break;
 
 		case LOCK_DB:
-			tdb_lockall_mark(lock_ctx->ctdb_db->ltdb->tdb);
+			ctdb_lockdb_mark(lock_ctx->ctdb_db);
 			break;
 
 		case LOCK_ALLDB_PRIO:
@@ -346,20 +395,30 @@ static void process_callbacks(struct lock_context *lock_ctx, bool locked)
 	}
 
 	request = lock_ctx->request;
-	if (lock_ctx->auto_mark) {
-		/* Reset the destructor, so request is not removed from the list */
-		talloc_set_destructor(request, NULL);
+	if (auto_mark) {
+		/* Since request may be freed in the callback, unset the lock
+		 * context, so request destructor will not free lock context.
+		 */
+		request->lctx = NULL;
 	}
+
+	/* Since request may be freed in the callback, unset the request */
+	lock_ctx->request = NULL;
+
 	request->callback(request->private_data, locked);
 
-	if (lock_ctx->auto_mark && locked) {
+	if (!auto_mark) {
+		return;
+	}
+
+	if (locked) {
 		switch (lock_ctx->type) {
 		case LOCK_RECORD:
 			tdb_chainlock_unmark(lock_ctx->ctdb_db->ltdb->tdb, lock_ctx->key);
 			break;
 
 		case LOCK_DB:
-			tdb_lockall_unmark(lock_ctx->ctdb_db->ltdb->tdb);
+			ctdb_lockdb_unmark(lock_ctx->ctdb_db);
 			break;
 
 		case LOCK_ALLDB_PRIO:
@@ -371,6 +430,8 @@ static void process_callbacks(struct lock_context *lock_ctx, bool locked)
 			break;
 		}
 	}
+
+	talloc_free(lock_ctx);
 }
 
 
@@ -416,7 +477,6 @@ static void ctdb_lock_handler(struct tevent_context *ev,
 			    void *private_data)
 {
 	struct lock_context *lock_ctx;
-	TALLOC_CTX *tmp_ctx = NULL;
 	char c;
 	bool locked;
 	double t;
@@ -429,11 +489,6 @@ static void ctdb_lock_handler(struct tevent_context *ev,
 
 	t = timeval_elapsed(&lock_ctx->start_time);
 	id = lock_bucket_id(t);
-
-	if (lock_ctx->auto_mark) {
-		tmp_ctx = talloc_new(ev);
-		talloc_steal(tmp_ctx, lock_ctx);
-	}
 
 	/* Read the status from the child process */
 	if (sys_read(lock_ctx->fd[0], &c, 1) != 1) {
@@ -466,10 +521,6 @@ static void ctdb_lock_handler(struct tevent_context *ev,
 	}
 
 	process_callbacks(lock_ctx, locked);
-
-	if (lock_ctx->auto_mark) {
-		talloc_free(tmp_ctx);
-	}
 }
 
 
@@ -482,10 +533,12 @@ static void ctdb_lock_timeout_handler(struct tevent_context *ev,
 				    struct timeval current_time,
 				    void *private_data)
 {
-	static const char * debug_locks = NULL;
+	static char debug_locks[PATH_MAX+1] = "";
 	struct lock_context *lock_ctx;
 	struct ctdb_context *ctdb;
 	pid_t pid;
+	double elapsed_time;
+	int new_timer;
 
 	lock_ctx = talloc_get_type_abort(private_data, struct lock_context);
 	ctdb = lock_ctx->ctdb;
@@ -495,28 +548,23 @@ static void ctdb_lock_timeout_handler(struct tevent_context *ev,
 		lock_ctx->ttimer = NULL;
 		return;
 	}
+
+	elapsed_time = timeval_elapsed(&lock_ctx->start_time);
 	if (lock_ctx->ctdb_db) {
 		DEBUG(DEBUG_WARNING,
 		      ("Unable to get %s lock on database %s for %.0lf seconds\n",
 		       (lock_ctx->type == LOCK_RECORD ? "RECORD" : "DB"),
-		       lock_ctx->ctdb_db->db_name,
-		       timeval_elapsed(&lock_ctx->start_time)));
+		       lock_ctx->ctdb_db->db_name, elapsed_time));
 	} else {
 		DEBUG(DEBUG_WARNING,
 		      ("Unable to get ALLDB locks for %.0lf seconds\n",
-		       timeval_elapsed(&lock_ctx->start_time)));
+		       elapsed_time));
 	}
 
-	/* Fire a child process to find the blocking process. */
-	if (debug_locks == NULL) {
-		debug_locks = getenv("CTDB_DEBUG_LOCKS");
-		if (debug_locks == NULL) {
-			debug_locks = talloc_asprintf(ctdb,
-						      "%s/debug_locks.sh",
-						      getenv("CTDB_BASE"));
-		}
-	}
-	if (debug_locks != NULL) {
+	if (ctdb_set_helper("lock debugging helper",
+			    debug_locks, sizeof(debug_locks),
+			    "CTDB_DEBUG_LOCKS",
+			    getenv("CTDB_BASE"), "debug_locks.sh")) {
 		pid = vfork();
 		if (pid == 0) {
 			execl(debug_locks, debug_locks, NULL);
@@ -526,21 +574,29 @@ static void ctdb_lock_timeout_handler(struct tevent_context *ev,
 	} else {
 		DEBUG(DEBUG_WARNING,
 		      (__location__
-		       " Unable to setup lock debugging - no memory?\n"));
+		       " Unable to setup lock debugging\n"));
+	}
+
+	/* Back-off logging if lock is not obtained for a long time */
+	if (elapsed_time < 100.0) {
+		new_timer = 10;
+	} else if (elapsed_time < 1000.0) {
+		new_timer = 100;
+	} else {
+		new_timer = 1000;
 	}
 
 	/* reset the timeout timer */
 	// talloc_free(lock_ctx->ttimer);
 	lock_ctx->ttimer = tevent_add_timer(ctdb->ev,
 					    lock_ctx,
-					    timeval_current_ofs(10, 0),
+					    timeval_current_ofs(new_timer, 0),
 					    ctdb_lock_timeout_handler,
 					    (void *)lock_ctx);
 }
 
 
-static int db_count_handler(struct ctdb_db_context *ctdb_db, uint32_t priority,
-			    void *private_data)
+static int db_count_handler(struct ctdb_db_context *ctdb_db, void *private_data)
 {
 	int *count = (int *)private_data;
 
@@ -566,8 +622,7 @@ struct db_namelist {
 	int n;
 };
 
-static int db_name_handler(struct ctdb_db_context *ctdb_db, uint32_t priority,
-			   void *private_data)
+static int db_name_handler(struct ctdb_db_context *ctdb_db, void *private_data)
 {
 	struct db_namelist *list = (struct db_namelist *)private_data;
 
@@ -600,13 +655,15 @@ static bool lock_helper_args(TALLOC_CTX *mem_ctx,
 
 	case LOCK_ALLDB_PRIO:
 		nargs = 3;
-		ctdb_db_iterator(ctdb, lock_ctx->priority, db_count_handler, &nargs);
+		ctdb_db_prio_iterator(ctdb, lock_ctx->priority,
+				      db_count_handler, &nargs);
 		break;
 
 	case LOCK_ALLDB:
 		nargs = 3;
 		for (priority=1; priority<NUM_DB_PRIORITIES; priority++) {
-			ctdb_db_iterator(ctdb, priority, db_count_handler, &nargs);
+			ctdb_db_prio_iterator(ctdb, priority,
+					      db_count_handler, &nargs);
 		}
 		break;
 	}
@@ -646,7 +703,8 @@ static bool lock_helper_args(TALLOC_CTX *mem_ctx,
 		args[2] = talloc_strdup(args, "DB");
 		list.names = args;
 		list.n = 3;
-		ctdb_db_iterator(ctdb, lock_ctx->priority, db_name_handler, &list);
+		ctdb_db_prio_iterator(ctdb, lock_ctx->priority,
+				      db_name_handler, &list);
 		break;
 
 	case LOCK_ALLDB:
@@ -654,7 +712,8 @@ static bool lock_helper_args(TALLOC_CTX *mem_ctx,
 		list.names = args;
 		list.n = 3;
 		for (priority=1; priority<NUM_DB_PRIORITIES; priority++) {
-			ctdb_db_iterator(ctdb, priority, db_name_handler, &list);
+			ctdb_db_prio_iterator(ctdb, priority,
+					      db_name_handler, &list);
 		}
 		break;
 	}
@@ -742,20 +801,15 @@ static void ctdb_lock_schedule(struct ctdb_context *ctdb)
 	struct lock_context *lock_ctx;
 	int ret, argc;
 	TALLOC_CTX *tmp_ctx;
-	const char *helper = CTDB_HELPER_BINDIR "/ctdb_lock_helper";
-	static const char *prog = NULL;
+	static char prog[PATH_MAX+1] = "";
 	const char **args;
 
-	if (prog == NULL) {
-		const char *t;
-
-		t = getenv("CTDB_LOCK_HELPER");
-		if (t != NULL) {
-			prog = talloc_strdup(ctdb, t);
-		} else {
-			prog = talloc_strdup(ctdb, helper);
-		}
-		CTDB_NO_MEMORY_VOID(ctdb, prog);
+	if (!ctdb_set_helper("lock helper",
+			     prog, sizeof(prog),
+			     "CTDB_LOCK_HELPER",
+			     CTDB_HELPER_BINDIR, "ctdb_lock_helper")) {
+		ctdb_die(ctdb, __location__
+			 " Unable to set lock helper\n");
 	}
 
 	/* Find a lock context with requests */
@@ -805,8 +859,6 @@ static void ctdb_lock_schedule(struct ctdb_context *ctdb)
 	/* Parent process */
 	close(lock_ctx->fd[1]);
 
-	talloc_set_destructor(lock_ctx, ctdb_lock_context_destructor);
-
 	talloc_free(tmp_ctx);
 
 	/* Set up timeout handler */
@@ -818,7 +870,6 @@ static void ctdb_lock_schedule(struct ctdb_context *ctdb)
 	if (lock_ctx->ttimer == NULL) {
 		ctdb_kill(ctdb, lock_ctx->child, SIGKILL);
 		lock_ctx->child = -1;
-		talloc_set_destructor(lock_ctx, NULL);
 		close(lock_ctx->fd[0]);
 		return;
 	}
@@ -834,7 +885,6 @@ static void ctdb_lock_schedule(struct ctdb_context *ctdb)
 		TALLOC_FREE(lock_ctx->ttimer);
 		ctdb_kill(ctdb, lock_ctx->child, SIGKILL);
 		lock_ctx->child = -1;
-		talloc_set_destructor(lock_ctx, NULL);
 		close(lock_ctx->fd[0]);
 		return;
 	}
@@ -899,6 +949,7 @@ static struct lock_request *ctdb_lock_internal(TALLOC_CTX *mem_ctx,
 		if (lock_ctx->key.dptr == NULL) {
 			DEBUG(DEBUG_ERR, (__location__ "Memory allocation error\n"));
 			talloc_free(lock_ctx);
+			talloc_free(request);
 			return NULL;
 		}
 		lock_ctx->key_hash = ctdb_hash(&key);
@@ -932,6 +983,7 @@ static struct lock_request *ctdb_lock_internal(TALLOC_CTX *mem_ctx,
 	request->private_data = private_data;
 
 	talloc_set_destructor(request, ctdb_lock_request_destructor);
+	talloc_set_destructor(lock_ctx, ctdb_lock_context_destructor);
 
 	ctdb_lock_schedule(ctdb);
 

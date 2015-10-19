@@ -28,6 +28,7 @@
 #include "lib/tdb_wrap/tdb_wrap.h"
 #include "lib/util/dlinklist.h"
 #include <ctype.h>
+#include "common/reqid.h"
 
 #define PERSISTENT_HEALTH_TDB "persistent_health.tdb"
 
@@ -115,11 +116,6 @@ static int ctdb_ltdb_store_server(struct ctdb_db_context *ctdb_db,
 		 * fails. So storing the empty record makes sure that we do not
 		 * need to change the client code.
 		 */
-		if ((header->flags & CTDB_REC_FLAG_VACUUM_MIGRATED) &&
-		    (ctdb_db->ctdb->pnn == header->dmaster)) {
-			keep = true;
-			schedule_for_deletion = true;
-		}
 		if (!(header->flags & CTDB_REC_FLAG_VACUUM_MIGRATED)) {
 			keep = true;
 		} else if (ctdb_db->ctdb->pnn != header->dmaster) {
@@ -246,6 +242,7 @@ store:
 
 struct lock_fetch_state {
 	struct ctdb_context *ctdb;
+	struct ctdb_db_context *ctdb_db;
 	void (*recv_pkt)(void *, struct ctdb_req_header *);
 	void *recv_context;
 	struct ctdb_req_header *hdr;
@@ -260,7 +257,7 @@ static void lock_fetch_callback(void *p, bool locked)
 {
 	struct lock_fetch_state *state = talloc_get_type(p, struct lock_fetch_state);
 	if (!state->ignore_generation &&
-	    state->generation != state->ctdb->vnn_map->generation) {
+	    state->generation != state->ctdb_db->generation) {
 		DEBUG(DEBUG_NOTICE,("Discarding previous generation lockwait packet\n"));
 		talloc_free(state->hdr);
 		return;
@@ -326,10 +323,11 @@ int ctdb_ltdb_lock_requeue(struct ctdb_db_context *ctdb_db,
 
 	state = talloc(hdr, struct lock_fetch_state);
 	state->ctdb = ctdb_db->ctdb;
+	state->ctdb_db = ctdb_db;
 	state->hdr = hdr;
 	state->recv_pkt = recv_pkt;
 	state->recv_context = recv_context;
-	state->generation = ctdb_db->ctdb->vnn_map->generation;
+	state->generation = ctdb_db->generation;
 	state->ignore_generation = ignore_generation;
 
 	/* now the contended path */
@@ -622,7 +620,7 @@ int ctdb_recheck_persistent_health(struct ctdb_context *ctdb)
 				   ctdb_db->unhealthy_reason));
 	}
 	DEBUG((fail!=0)?DEBUG_ALERT:DEBUG_NOTICE,
-	      ("ctdb_recheck_presistent_health: OK[%d] FAIL[%d]\n",
+	      ("ctdb_recheck_persistent_health: OK[%d] FAIL[%d]\n",
 	       ok, fail));
 
 	if (fail != 0) {
@@ -1014,6 +1012,7 @@ again:
 		return -1;
 	}
 
+	ctdb_db->generation = ctdb->vnn_map->generation;
 
 	DEBUG(DEBUG_NOTICE,("Attached to database '%s' with flags 0x%x\n",
 			    ctdb_db->db_path, tdb_flags));
@@ -1098,7 +1097,7 @@ int32_t ctdb_control_db_attach(struct ctdb_context *ctdb, TDB_DATA indata,
 	 * recovery daemons.
 	 */
 	if (client_id != 0) {
-		client = ctdb_reqid_find(ctdb, client_id, struct ctdb_client);
+		client = reqid_find(ctdb->idr, client_id, struct ctdb_client);
 	}
 	if (client != NULL) {
 		/* If the node is inactive it is not part of the cluster
@@ -1238,7 +1237,7 @@ int32_t ctdb_control_db_detach(struct ctdb_context *ctdb, TDB_DATA indata,
 	 * Do the actual detach only if the control comes from other daemons.
 	 */
 	if (client_id != 0) {
-		client = ctdb_reqid_find(ctdb, client_id, struct ctdb_client);
+		client = reqid_find(ctdb->idr, client_id, struct ctdb_client);
 		if (client != NULL) {
 			/* forward the control to all the nodes */
 			ctdb_daemon_send_control(ctdb, CTDB_BROADCAST_ALL, 0,
@@ -1605,6 +1604,20 @@ int ctdb_set_db_sticky(struct ctdb_context *ctdb, struct ctdb_db_context *ctdb_d
 	return 0;
 }
 
+void ctdb_db_statistics_reset(struct ctdb_db_context *ctdb_db)
+{
+	struct ctdb_db_statistics *s = &ctdb_db->statistics;
+	int i;
+
+	for (i=0; i<MAX_HOT_KEYS; i++) {
+		if (s->hot_keys[i].key.dsize > 0) {
+			talloc_free(s->hot_keys[i].key.dptr);
+		}
+	}
+
+	ZERO_STRUCT(ctdb_db->statistics);
+}
+
 int32_t ctdb_control_get_db_statistics(struct ctdb_context *ctdb,
 				uint32_t db_id,
 				TDB_DATA *outdata)
@@ -1632,7 +1645,8 @@ int32_t ctdb_control_get_db_statistics(struct ctdb_context *ctdb,
 		return -1;
 	}
 
-	*stats = ctdb_db->statistics;
+	memcpy(stats, &ctdb_db->statistics,
+	       offsetof(struct ctdb_db_statistics, hot_keys_wire));
 
 	stats->num_hot_keys = MAX_HOT_KEYS;
 

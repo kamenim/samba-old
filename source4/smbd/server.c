@@ -360,6 +360,8 @@ static int binary_smbd_main(const char *binary_name, int argc, const char *argv[
 
 	poptFreeContext(pc);
 
+	talloc_enable_null_tracking();
+
 	setup_logging(binary_name, opt_interactive?DEBUG_STDOUT:DEBUG_FILE);
 	setup_signals();
 
@@ -389,12 +391,6 @@ static int binary_smbd_main(const char *binary_name, int argc, const char *argv[
 	}
 
 	pidfile_create(lpcfg_pid_directory(cmdline_lp_ctx), binary_name);
-
-	/* Set up a database to hold a random seed, in case we don't
-	 * have /dev/urandom */
-	if (!randseed_init(talloc_autofree_context(), cmdline_lp_ctx)) {
-		return 1;
-	}
 
 	if (lpcfg_server_role(cmdline_lp_ctx) == ROLE_ACTIVE_DIRECTORY_DC) {
 		if (!open_schannel_session_store(talloc_autofree_context(), cmdline_lp_ctx)) {
